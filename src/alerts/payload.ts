@@ -37,8 +37,30 @@ export const signalPayloadSchema = z.object({
     // 1 = bullish, -1 = bearish, 0 = neutral or filter disabled.
     trend: z.union([z.literal(-1), z.literal(0), z.literal(1)]),
   }),
+  // Indicative stop and target computed by the indicator (swing +/- ATR buffer, R multiple).
+  // Optional so alerts created before this field existed still validate.
+  plan: z
+    .object({
+      stop: z.number().positive(),
+      target: z.number().positive(),
+    })
+    .optional(),
+}).superRefine((payload, ctx) => {
+  if (!payload.plan) return;
+  const { stop, target } = payload.plan;
+  const sane =
+    payload.direction === 'BUY'
+      ? stop < payload.price && payload.price < target
+      : target < payload.price && payload.price < stop;
+  if (!sane) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['plan'],
+      message: 'stop and target must sit on opposite sides of the price for the direction',
+    });
+  }
 });
 
 export type SignalPayload = z.infer<typeof signalPayloadSchema>;
 export type Direction = SignalPayload['direction'];
-export type SignalSnapshot = Pick<SignalPayload, 'price' | 'indicators' | 'levels' | 'htf'>;
+export type SignalSnapshot = Pick<SignalPayload, 'price' | 'indicators' | 'levels' | 'htf' | 'plan'>;

@@ -83,6 +83,13 @@ sends nothing.
 | MACD 12/26/9 | line > signal | line < signal |
 | H1 EMA trend | bullish (last closed H1 bar) | bearish |
 
+**Entry helper.** On each signal the indicator draws the entry (grey dotted), stop (red dashed) and
+target (green dashed) lines until price touches one, plus one compact label with SL, TP and the USD
+risk at the chosen size (default 1 oz = 0.01 lot; it is flagged when it exceeds the risk budget input).
+Stop = swing low/high of the last 10 candles +/- 0.5 x ATR, target = 1.5 x the stop distance. The
+same levels go into the alert as `plan.stop` / `plan.target` (optional in the payload) and appear in
+the Discord message. If you created alerts earlier, recreate them to pick up the new message.
+
 An alert fires only on the **first confirmed candle** where all conditions become true, then stays
 quiet for a cooldown (4 bars). Without this, a trend would alert on every candle. These parameters
 are research defaults, not validated trading advice.

@@ -53,6 +53,24 @@ describe('POST /webhook/tradingview', () => {
       expect(res.json().status).toBe('accepted');
     });
 
+    it('stores the indicative stop/target and shows them in the Discord message', async () => {
+      const t = await h.build();
+      const res = await t.post(validPayload({ plan: { stop: 3975.4, target: 4001.5 } }));
+      expect(res.statusCode).toBe(200);
+
+      await t.processor.idle();
+      const signal = await h.store.get(res.json().id);
+      expect(signal?.snapshot.plan).toEqual({ stop: 3975.4, target: 4001.5 });
+      expect(h.notifier.sent[0]).toContain('Entry 3985.25 | stop 3975.40 | target 4001.50');
+    });
+
+    it('rejects a plan whose stop or target sits on the wrong side of the price', async () => {
+      const t = await h.build();
+      const res = await t.post(validPayload({ direction: 'BUY', plan: { stop: 3990, target: 4001.5 } }));
+      expect(res.statusCode).toBe(400);
+      expect(await signalCount()).toBe(0);
+    });
+
     it('never persists the shared token', async () => {
       const t = await h.build();
       const res = await t.post(validPayload());

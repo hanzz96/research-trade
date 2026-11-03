@@ -87,6 +87,7 @@ export function registerAlertRoutes(
           indicators: payload.indicators,
           levels: payload.levels,
           htf: payload.htf,
+          ...(payload.plan && { plan: payload.plan }),
         },
       });
     } catch (err) {
