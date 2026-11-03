@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createHarness, permanent, retryable, TOKEN, validPayload } from './helpers.js';
+import { createHarness, permanent, retryable, TOKEN, validPayload } from '../support/helpers.js';
 
 type Harness = Awaited<ReturnType<typeof createHarness>>;
 
@@ -299,7 +299,7 @@ describe('POST /webhook/tradingview', () => {
       await t.processor.idle();
       const res = await t.app.inject({ method: 'GET', url: '/health' });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ status: 'ok', signals: { SENT: 1 } });
+      expect(res.json()).toEqual({ status: 'ok', signals: { SENT: 1 }, bars: {} });
     });
   });
 });

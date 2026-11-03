@@ -65,7 +65,7 @@ sends nothing.
 
 ## TradingView
 
-1. Add `pine/xauusd_entry_reminder.pine` to your chart (Pine Editor → paste → Save → Add to chart)
+1. Add `pine/alerts/xauusd_entry_reminder.pine` to your chart (Pine Editor → paste → Save → Add to chart)
    on `OANDA:XAUUSD`, timeframe **M15**. The higher-timeframe filter (H1) only applies when the
    chart is below the higher timeframe.
 2. Create **two alerts** (one per condition): *Condition* = this indicator → `BUY candidate`, then
@@ -98,6 +98,43 @@ are research defaults, not validated trading advice.
 - On restart, unfinished signals are re-sent. Delivery is therefore at-least-once: a crash between
   the Discord call and the status update can repeat one message, but never drops a signal.
 - If `DISCORD_WEBHOOK_URL` is empty, signals are still stored and marked `FAILED` with a clear reason.
+
+## Forward test data (MT5 → database)
+
+A second feature collects real broker candles (with the real spread) so strategies can be paper
+traded and backtested on FBS data instead of TradingView's. Stage 1, the backend, is ready:
+
+- `POST /ingest/bars` takes up to 500 **closed** candles per call, authenticated with the
+  `X-Ingest-Token` header (`INGEST_TOKEN` in `.env`; the endpoint is disabled when it is empty).
+  Candles are idempotent per source, symbol, timeframe and open time, so re-sending is safe.
+- `GET /health` shows the latest candle and the candle count per timeframe.
+
+```bash
+set -a; . ./.env; set +a
+curl -sS -X POST http://127.0.0.1:3000/ingest/bars \
+  -H 'content-type: application/json' -H "x-ingest-token: $INGEST_TOKEN" \
+  -d '{"source":"mt5-fbs","symbol":"XAUUSD","timeframe":"15","bars":[
+        {"time":"2026-11-03T08:30:00Z","open":3900,"high":3903.5,"low":3898.2,"close":3902.1,
+         "tick_volume":812,"spread_min":0.2,"spread_avg":0.31,"spread_max":0.9}]}'
+```
+
+`time` is the candle open time in UTC and spreads are in price units (USD for XAUUSD).
+Next stages: the MT5 Expert Advisor that sends candles (`mt5/`), a CSV import for history, then
+the strategy engine and paper-trade tracker. See [docs/PLAN.md](docs/PLAN.md).
+
+## Project structure
+
+One folder per feature; shared code in `shared/`. Conventions are in [CLAUDE.md](CLAUDE.md).
+
+```
+src/alerts/        TradingView webhook -> Discord
+src/forward-test/  MT5 candles -> Postgres -> paper trading
+src/shared/        config, db, auth, migration runner, rejection log
+src/server.ts      HTTP app wiring        src/migrations.ts  all migrations, one history
+test/              mirrors src/ (alerts/, forward-test/, shared/) + support/ harness
+pine/alerts/       indicators for TradingView alerts (committed)
+pine/backtest/     local backtest strategies (git-ignored)
+```
 
 ## Development
 

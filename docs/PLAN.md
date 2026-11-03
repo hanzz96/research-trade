@@ -47,6 +47,18 @@ floating spread, margin/profit currency USD.
 | **M6** | Reliability and audit: recovery, retries, health alerts | Partly covered in M1 (recovery, retry, status tracking) |
 | **M7** | End-to-end testing and paper trading (several weeks) | Not started |
 
+### Forward test (paper trading on broker data)
+
+Collects FBS candles and spreads from MT5 into Postgres, then tracks paper signals and results.
+Strategies are frozen before the test starts and evaluated against criteria set in advance.
+
+| Stage | Scope | Status |
+|---|---|---|
+| 1 | `bars` table, `POST /ingest/bars` with its own token, tests | Done (verified on the real database) |
+| 2 | MT5 Expert Advisor (MQL5) that sends closed candles and spread stats, data only, no orders | Not started |
+| 3 | CSV import of MT5 bar history, for backtests with real spread | Not started |
+| 4 | Strategy engine (EMA/RSI/MACD on H1, momentum scalper on M15 + M30) and paper-trade tracker | Not started |
+
 Order: M1 → M2 → M3, with M4 able to run in parallel. Gate before M3: review backtest results from M2;
 if the rule set shows no value, change the rules before building more on top.
 
