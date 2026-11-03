@@ -84,8 +84,9 @@ sends nothing.
 | H1 EMA trend | bullish (last closed H1 bar) | bearish |
 
 **Entry helper.** On each signal the indicator draws the entry (grey dotted), stop (red dashed) and
-target (green dashed) lines until price touches one, plus one compact label with SL, TP and the USD
-risk at the chosen size (default 1 oz = 0.01 lot; it is flagged when it exceeds the risk budget input).
+target (green dashed) lines until price touches one. Each level has its own label: a red `SL` label with
+the USD risk at the chosen size (default 1 oz = 0.01 lot; flagged when it exceeds the risk budget input)
+and a green `TP` label with the USD reward. The label of the level that was touched gets `> HIT`.
 Stop = swing low/high of the last 10 candles +/- 0.5 x ATR, target = 1.5 x the stop distance. The
 same levels go into the alert as `plan.stop` / `plan.target` (optional in the payload) and appear in
 the Discord message. If you created alerts earlier, recreate them to pick up the new message.

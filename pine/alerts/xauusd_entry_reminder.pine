@@ -90,7 +90,8 @@ var float planTarget = na
 var line entryLine = na
 var line stopLine = na
 var line targetLine = na
-var label planLabel = na
+var label stopLabel = na
+var label targetLabel = na
 
 if showPlan and (buySignal or sellSignal)
     planDir    := buySignal ? 1 : -1
@@ -102,12 +103,13 @@ if showPlan and (buySignal or sellSignal)
     entryLine  := line.new(bar_index, close, bar_index + 1, close, color = color.new(color.gray, 0), style = line.style_dotted)
     stopLine   := line.new(bar_index, planStop, bar_index + 1, planStop, color = color.red, style = line.style_dashed)
     targetLine := line.new(bar_index, planTarget, bar_index + 1, planTarget, color = color.green, style = line.style_dashed)
-    // One compact line, parked beyond the candle so it does not cover the price action.
-    planLabel  := label.new(bar_index, buySignal ? low - 1.5 * atr : high + 1.5 * atr,
-         "SL " + str.tostring(planStop, "#") + "  TP " + str.tostring(planTarget, "#") + "  $" + str.tostring(riskUsd, "#.#")
+    rewardUsd = math.abs(planTarget - close) * qtyOz
+    // One small label per level, sitting on its own line: red for the stop, green for the target.
+    stopLabel   := label.new(bar_index, planStop, "SL " + str.tostring(planStop, "#") + "  -$" + str.tostring(riskUsd, "#.#")
          + (overBudget ? " (over budget)" : ""),
-         style = buySignal ? label.style_label_up : label.style_label_down,
-         color = color.new(overBudget ? color.orange : color.gray, 35), textcolor = color.white, size = size.tiny)
+         style = label.style_label_left, color = color.new(color.red, 25), textcolor = color.white, size = size.tiny)
+    targetLabel := label.new(bar_index, planTarget, "TP " + str.tostring(planTarget, "#") + "  +$" + str.tostring(rewardUsd, "#.#"),
+         style = label.style_label_left, color = color.new(color.green, 25), textcolor = color.white, size = size.tiny)
 else if planDir != 0 and bar_index > planBar
     // Keep the levels extending until price touches one of them. If both are touched in the
     // same candle the stop is assumed to hit first (the cautious reading).
@@ -117,7 +119,10 @@ else if planDir != 0 and bar_index > planBar
     line.set_x2(stopLine, bar_index)
     line.set_x2(targetLine, bar_index)
     if stopHit or targetHit
-        label.set_text(planLabel, label.get_text(planLabel) + (stopHit ? "  > SL hit" : "  > TP hit"))
+        if stopHit
+            label.set_text(stopLabel, label.get_text(stopLabel) + "  > HIT")
+        else
+            label.set_text(targetLabel, label.get_text(targetLabel) + "  > HIT")
         planDir := 0
 
 // ── Plots ─────────────────────────────────────────────────────────────────────
