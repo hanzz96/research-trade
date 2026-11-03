@@ -8,4 +8,6 @@ data/
 .env
 .env.*
 !.env.example
+# ngrok config holds the account authtoken
+ngrok.yml
 .DS_Store
