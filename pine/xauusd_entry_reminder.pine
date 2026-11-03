@@ -1,0 +1,95 @@
+//@version=6
+// XAU/USD Entry Reminder (alert-only).
+// Detects BUY / SELL candidates from EMA, RSI and MACD on a confirmed candle close and exposes the
+// values the backend needs through hidden plots, so the alert message can reference them with
+// {{plot("...")}} placeholders. No secrets live in this script: paste the webhook token into the
+// alert message in TradingView's alert dialog.
+indicator("XAUUSD Entry Reminder", shorttitle = "XAU Entry", overlay = true)
+
+GRP_TREND    = "Trend"
+GRP_MOMENTUM = "Momentum"
+GRP_LEVELS   = "Levels"
+GRP_FILTER   = "Filters"
+
+// ── Inputs ────────────────────────────────────────────────────────────────────
+emaFastLen    = input.int(9, "EMA fast", minval = 1, group = GRP_TREND)
+emaSlowLen    = input.int(21, "EMA slow", minval = 2, group = GRP_TREND)
+
+rsiLen        = input.int(14, "RSI length", minval = 2, group = GRP_MOMENTUM)
+rsiBuyMin     = input.float(55.0, "RSI BUY minimum", minval = 0.0, maxval = 100.0, group = GRP_MOMENTUM)
+rsiSellMax    = input.float(45.0, "RSI SELL maximum", minval = 0.0, maxval = 100.0, group = GRP_MOMENTUM)
+macdFastLen   = input.int(12, "MACD fast", minval = 1, group = GRP_MOMENTUM)
+macdSlowLen   = input.int(26, "MACD slow", minval = 2, group = GRP_MOMENTUM)
+macdSignalLen = input.int(9, "MACD signal", minval = 1, group = GRP_MOMENTUM)
+macdMode      = input.string("Line vs signal", "MACD confirmation", options = ["Line vs signal", "Histogram"], group = GRP_MOMENTUM)
+
+atrLen        = input.int(14, "ATR length", minval = 1, group = GRP_LEVELS)
+swingLen      = input.int(10, "Swing lookback (bars)", minval = 2, group = GRP_LEVELS)
+
+useHtf        = input.bool(true, "Use higher-timeframe trend filter", group = GRP_FILTER)
+htfTf         = input.timeframe("60", "Higher timeframe", group = GRP_FILTER)
+cooldownBars  = input.int(4, "Cooldown after a signal (bars)", minval = 0, group = GRP_FILTER)
+
+// ── Indicators ────────────────────────────────────────────────────────────────
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsi     = ta.rsi(close, rsiLen)
+[macdLine, signalLine, histLine] = ta.macd(close, macdFastLen, macdSlowLen, macdSignalLen)
+atr       = ta.atr(atrLen)
+swingLow  = ta.lowest(low, swingLen)
+swingHigh = ta.highest(high, swingLen)
+
+// Higher-timeframe trend from the last CLOSED higher-timeframe bar: [1] with lookahead_on is the
+// standard non-repainting pattern, so the value never changes while the lower-timeframe bar forms.
+htfTrendExpr() =>
+    fast = ta.ema(close, emaFastLen)
+    slow = ta.ema(close, emaSlowLen)
+    fast > slow ? 1 : fast < slow ? -1 : 0
+
+htfRaw    = request.security(syminfo.tickerid, htfTf, htfTrendExpr()[1], lookahead = barmerge.lookahead_on)
+// The filter only makes sense when the chart runs below the higher timeframe; otherwise it is off.
+htfActive = useHtf and timeframe.in_seconds() < timeframe.in_seconds(htfTf)
+htfTrend  = htfActive ? nz(htfRaw) : 0
+
+// ── Rules ─────────────────────────────────────────────────────────────────────
+macdBull = macdMode == "Line vs signal" ? macdLine > signalLine : histLine > 0
+macdBear = macdMode == "Line vs signal" ? macdLine < signalLine : histLine < 0
+htfBull  = not htfActive or htfTrend == 1
+htfBear  = not htfActive or htfTrend == -1
+
+buyState  = emaFast > emaSlow and rsi >= rsiBuyMin  and macdBull and htfBull
+sellState = emaFast < emaSlow and rsi <= rsiSellMax and macdBear and htfBear
+
+// Edge trigger: fire only on the first confirmed bar where every condition becomes true, then
+// stay quiet for the cooldown. Without this, a trend would alert on every candle.
+var int lastSignalBar = na
+cooldownOver = na(lastSignalBar) or bar_index - lastSignalBar > cooldownBars
+buySignal  = barstate.isconfirmed and buyState  and not buyState[1]  and cooldownOver
+sellSignal = barstate.isconfirmed and sellState and not sellState[1] and cooldownOver
+if buySignal or sellSignal
+    lastSignalBar := bar_index
+
+// ── Plots ─────────────────────────────────────────────────────────────────────
+plot(emaFast, "EMA Fast", color = color.new(color.yellow, 0))
+plot(emaSlow, "EMA Slow", color = color.new(color.blue, 0))
+// Hidden from the chart, but visible in the Data Window and usable as alert placeholders.
+plot(rsi, "RSI", display = display.data_window)
+plot(macdLine, "MACD", display = display.data_window)
+plot(signalLine, "MACD Signal", display = display.data_window)
+plot(histLine, "MACD Histogram", display = display.data_window)
+plot(atr, "ATR", display = display.data_window)
+plot(swingLow, "Swing Low", display = display.data_window)
+plot(swingHigh, "Swing High", display = display.data_window)
+plot(htfTrend, "HTF Trend", display = display.data_window)
+
+plotshape(buySignal, "BUY candidate", shape.triangleup, location.belowbar, color.green, size = size.small, text = "BUY")
+plotshape(sellSignal, "SELL candidate", shape.triangledown, location.abovebar, color.red, size = size.small, text = "SELL")
+
+// ── Alerts ────────────────────────────────────────────────────────────────────
+// Create one alert per condition with "Once Per Bar Close", Webhook URL set, and replace
+// PASTE_WEBHOOK_TOKEN_HERE in the message with the value of WEBHOOK_TOKEN from the backend .env.
+alertcondition(buySignal, "BUY candidate",
+  '{"version":"1.1","token":"PASTE_WEBHOOK_TOKEN_HERE","symbol":"{{ticker}}","timeframe":"{{interval}}","timestamp":"{{time}}","direction":"BUY","price":{{close}},"indicators":{"ema_fast":{{plot("EMA Fast")}},"ema_slow":{{plot("EMA Slow")}},"rsi":{{plot("RSI")}},"macd":{{plot("MACD")}},"macd_signal":{{plot("MACD Signal")}},"macd_histogram":{{plot("MACD Histogram")}},"atr":{{plot("ATR")}}},"levels":{"swing_low":{{plot("Swing Low")}},"swing_high":{{plot("Swing High")}}},"htf":{"trend":{{plot("HTF Trend")}}}}')
+
+alertcondition(sellSignal, "SELL candidate",
+  '{"version":"1.1","token":"PASTE_WEBHOOK_TOKEN_HERE","symbol":"{{ticker}}","timeframe":"{{interval}}","timestamp":"{{time}}","direction":"SELL","price":{{close}},"indicators":{"ema_fast":{{plot("EMA Fast")}},"ema_slow":{{plot("EMA Slow")}},"rsi":{{plot("RSI")}},"macd":{{plot("MACD")}},"macd_signal":{{plot("MACD Signal")}},"macd_histogram":{{plot("MACD Histogram")}},"atr":{{plot("ATR")}}},"levels":{"swing_low":{{plot("Swing Low")}},"swing_high":{{plot("Swing High")}}},"htf":{"trend":{{plot("HTF Trend")}}}}')
