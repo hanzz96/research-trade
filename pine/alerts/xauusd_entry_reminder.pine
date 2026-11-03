@@ -137,8 +137,8 @@ plot(longTarget, "BUY Target", display = display.data_window)
 plot(shortStop, "SELL Stop", display = display.data_window)
 plot(shortTarget, "SELL Target", display = display.data_window)
 
-plotshape(buySignal, "BUY candidate", shape.triangleup, location.belowbar, color.green, size = size.small)
-plotshape(sellSignal, "SELL candidate", shape.triangledown, location.abovebar, color.red, size = size.small)
+plotshape(buySignal, "BUY candidate", shape.triangleup, location.belowbar, color.green, size = size.small, text = "BUY")
+plotshape(sellSignal, "SELL candidate", shape.triangledown, location.abovebar, color.red, size = size.small, text = "SELL")
 
 // ── Alerts ────────────────────────────────────────────────────────────────────
 // Create one alert per condition with "Once Per Bar Close", Webhook URL set, and replace
