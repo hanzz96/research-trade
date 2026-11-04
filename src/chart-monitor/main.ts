@@ -75,9 +75,9 @@ async function runSchedule(config: MonitorConfig, deps: MonitorDeps, stop: Abort
     open || week === 'always'
       ? log.info({ market: 'open' }, 'market open, checks run')
       : log.info(
-          { market: 'closed', reopens: formatLocal(nextOpening(moment(), week), timeZone) },
-          'market closed, checks paused',
-        );
+        { market: 'closed', reopens: formatLocal(nextOpening(moment(), week), timeZone) },
+        'market closed, checks paused',
+      );
 
   let wasOpen = marketOpen();
   logMarket(wasOpen);
