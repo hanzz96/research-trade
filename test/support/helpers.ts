@@ -1,6 +1,6 @@
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify';
 import { loadConfig, type Config } from '../../src/shared/config.js';
-import { NotifyError, type Notifier } from '../../src/alerts/discord.js';
+import { NotifyError, type Notifier } from '../../src/shared/discord.js';
 import { migrate } from '../../src/migrations.js';
 import { SignalProcessor } from '../../src/alerts/processor.js';
 import { buildServer } from '../../src/server.js';

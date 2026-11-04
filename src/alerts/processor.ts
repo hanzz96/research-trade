@@ -1,4 +1,4 @@
-import { NotifyError, type Notifier } from './discord.js';
+import { NotifyError, type Notifier } from '../shared/discord.js';
 import { formatSignalMessage } from './format.js';
 import type { SignalStore } from './store.js';
 

@@ -10,11 +10,14 @@ src/
   alerts/        TradingView webhook -> Discord (webhook route, signal store, delivery)
   forward-test/  MT5 bars -> Postgres -> paper signals and results (ingest route, bar store;
                  the strategy engine and paper-trade tracker will live here)
-  shared/        config, db access, auth, migration runner, rejection log
+  chart-monitor/ separate process (own main.ts): reads signals off the TradingView Desktop chart
+                 over CDP and posts them to Discord; no server, no database
+  shared/        config, db access, auth, migration runner, rejection log, Discord notifier,
+                 display helpers
   server.ts      builds the HTTP app and registers each feature's routes (wiring only)
   index.ts       process bootstrap (wiring only)
   migrations.ts  collects every feature's migrations into one ordered history
-test/            mirrors src/ (alerts/, forward-test/, shared/) plus support/ for the harness
+test/            mirrors src/ (alerts/, forward-test/, chart-monitor/, shared/) plus support/ for the harness
 pine/alerts/     TradingView indicators used for alerts (committed)
 pine/backtest/   local strategy scripts for backtesting (git-ignored)
 mt5/             MetaTrader 5 Expert Advisors in MQL5 (data sender, no order functions)

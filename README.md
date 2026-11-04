@@ -130,6 +130,33 @@ curl -sS -X POST http://127.0.0.1:3000/ingest/bars \
 Next stages: the MT5 Expert Advisor that sends candles (`mt5/`), a CSV import for history, then
 the strategy engine and paper-trade tracker. See [docs/PLAN.md](docs/PLAN.md).
 
+## Chart monitor (TradingView → Discord without webhook alerts)
+
+TradingView only sends webhooks on a paid plan. As an alternative, `src/chart-monitor/` is a small
+separate process that reads the signals the indicator draws on the **TradingView Desktop** chart and
+posts new ones to Discord. It needs no server and no database; only `DISCORD_WEBHOOK_URL` in `.env`.
+
+1. Start TradingView Desktop with the debug port, for example
+   `/Applications/TradingView.app/Contents/MacOS/TradingView --remote-debugging-port=9222`.
+2. Keep one chart on `XAUUSD`, **M30**, with the *XAUUSD Entry Reminder* indicator and its
+   "Draw entry, stop and target on a signal" input on (the monitor reads those drawings).
+3. Run `npm run monitor`. It checks one minute after every M30 candle close (`:01` and `:31`) and
+   keeps running until stopped. `npm run monitor:once` does a single check and exits (exit code 1 on
+   failure), for cron or launchd.
+
+How it behaves:
+
+- The first successful read only records the signals already on the chart; nothing old is announced.
+- A signal is remembered only after its Discord message was delivered, so a failed send is retried
+  at the next check. Memory lives in `.monitor-state.json` (git-ignored).
+- If the chart cannot be read twice in a row (TradingView closed, other symbol or timeframe, indicator
+  removed) it posts one notice to Discord, and one more when it recovers.
+- It reads TradingView's internal chart model, so a TradingView update can break it; the tests cover
+  the logic but not that part, so check it after updating TradingView.
+- It only works while TradingView Desktop and the Mac are on. It is a convenience, not a guarantee;
+  for something durable use the webhook pipeline above.
+- Do not run it together with another watcher on the same Discord channel, or every signal is posted twice.
+
 ## Project structure
 
 One folder per feature; shared code in `shared/`. Conventions are in [CLAUDE.md](CLAUDE.md).
@@ -137,9 +164,10 @@ One folder per feature; shared code in `shared/`. Conventions are in [CLAUDE.md]
 ```
 src/alerts/        TradingView webhook -> Discord
 src/forward-test/  MT5 candles -> Postgres -> paper trading
-src/shared/        config, db, auth, migration runner, rejection log
+src/chart-monitor/ TradingView Desktop chart -> Discord (own process, own entry: main.ts)
+src/shared/        config, db, auth, migration runner, rejection log, Discord notifier, display helpers
 src/server.ts      HTTP app wiring        src/migrations.ts  all migrations, one history
-test/              mirrors src/ (alerts/, forward-test/, shared/) + support/ harness
+test/              mirrors src/ (alerts/, forward-test/, chart-monitor/, shared/) + support/ harness
 pine/alerts/       indicators for TradingView alerts (committed)
 pine/backtest/     local backtest strategies (git-ignored)
 ```

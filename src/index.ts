@@ -1,5 +1,5 @@
 import { pino } from 'pino';
-import { DisabledNotifier, DiscordNotifier } from './alerts/discord.js';
+import { DisabledNotifier, DiscordNotifier } from './shared/discord.js';
 import { SignalProcessor } from './alerts/processor.js';
 import { SignalStore } from './alerts/store.js';
 import { BarStore } from './forward-test/bars.js';

@@ -13,7 +13,7 @@ const csv = (fallback: string) =>
         .filter(Boolean),
     );
 
-const timezone = z
+export const timezone = z
   .string()
   .default('Asia/Jakarta')
   .refine((tz) => {
