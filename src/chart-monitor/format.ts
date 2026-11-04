@@ -26,7 +26,7 @@ function levelLines({ entry, stop, target }: ChartSignal): string[] {
 export function formatSignalNotice(signal: ChartSignal, detectedAt: Date, context: NoticeContext): string {
   return [
     `**${displaySymbol(context.symbol)} — ${signal.direction} CANDIDATE** (${displayTimeframe(context.timeframe)})`,
-    `Terdeteksi: ${formatTime(detectedAt.toISOString(), context.timeZone)} (${context.timeZone})`,
+    `Terdeteksi: ${formatTime(detectedAt, context.timeZone)} (${context.timeZone})`,
     ...levelLines(signal),
     ...(signal.hit ? [`Catatan: harga sudah menyentuh ${signal.hit} saat sinyal ini terbaca.`] : []),
     'Sumber: pemantauan chart TradingView, bukan alert webhook.',

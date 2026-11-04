@@ -1,5 +1,7 @@
+import moment from 'moment-timezone';
 import { z } from 'zod';
 import type { Db } from '../shared/db.js';
+import { toIsoString } from '../shared/time.js';
 
 const price = z.number().positive();
 const spread = z.number().nonnegative().optional();
@@ -43,17 +45,17 @@ export type IngestBatch = z.infer<typeof ingestSchema>;
 const SKEW_MS = 60_000;
 
 /** Rejects candles that are not aligned to the timeframe or are not closed yet. */
-export function findBarTimeProblem(batch: IngestBatch, now: number = Date.now()): string | null {
+export function findBarTimeProblem(batch: IngestBatch, now: number = moment().valueOf()): string | null {
   const minutes = Number(batch.timeframe);
   const length = minutes * 60_000;
   for (const [index, bar] of batch.bars.entries()) {
-    const openMs = Date.parse(bar.time);
+    const open = moment.utc(bar.time);
     // Intraday candles start on UTC multiples of the timeframe. Longer ones depend on the
     // broker's server-time day boundary, so they are not checked.
-    if (minutes <= 60 && (openMs / 60_000) % minutes !== 0) {
+    if (minutes <= 60 && (open.valueOf() / 60_000) % minutes !== 0) {
       return `bars.${index}.time: not aligned to the ${minutes}-minute timeframe`;
     }
-    if (openMs + length > now + SKEW_MS) {
+    if (open.clone().add(length, 'milliseconds').isAfter(moment(now).add(SKEW_MS, 'milliseconds'))) {
       return `bars.${index}.time: candle is not closed yet`;
     }
   }
@@ -105,7 +107,7 @@ export class BarStore {
     return Object.fromEntries(
       rows.map((row) => [
         row.timeframe,
-        { latest: new Date(row.latest).toISOString(), count: row.count },
+        { latest: toIsoString(row.latest), count: row.count },
       ]),
     );
   }

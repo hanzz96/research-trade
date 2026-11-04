@@ -1,3 +1,4 @@
+import moment from 'moment-timezone';
 import { z } from 'zod';
 
 const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
@@ -16,14 +17,7 @@ const csv = (fallback: string) =>
 export const timezone = z
   .string()
   .default('Asia/Jakarta')
-  .refine((tz) => {
-    try {
-      new Intl.DateTimeFormat('en', { timeZone: tz });
-      return true;
-    } catch {
-      return false;
-    }
-  }, 'must be a valid IANA time zone');
+  .refine((tz) => moment.tz.zone(tz) !== null, 'must be a valid IANA time zone');
 
 const envSchema = z.object({
   HOST: z.string().default('127.0.0.1'),

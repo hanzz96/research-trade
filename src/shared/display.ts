@@ -1,3 +1,5 @@
+import moment from 'moment-timezone';
+
 export function displaySymbol(symbol: string): string {
   const match = /^([A-Z]{3})([A-Z]{3})$/.exec(symbol.toUpperCase());
   return match ? `${match[1]}/${match[2]}` : symbol;
@@ -16,16 +18,9 @@ export function displayTimeframe(timeframe: string): string {
   return unit === 'M' ? `MN${count}` : `${unit}${count}`;
 }
 
-export function formatTime(iso: string, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(new Date(iso));
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
-  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+/** Local date and time in the given IANA time zone, e.g. "2026-11-04 16:01". */
+export function formatTime(value: moment.MomentInput, timeZone: string): string {
+  const parsed = moment.tz(value, timeZone);
+  if (!parsed.isValid()) throw new RangeError(`not a valid date: ${String(value)}`);
+  return parsed.format('YYYY-MM-DD HH:mm');
 }

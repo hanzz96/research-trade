@@ -1,4 +1,5 @@
 import type { Db } from '../shared/db.js';
+import { toIsoString } from '../shared/time.js';
 import type { Direction, SignalSnapshot } from './payload.js';
 
 export type SignalStatus = 'RECEIVED' | 'PROCESSING' | 'SENT' | 'FAILED';
@@ -38,7 +39,7 @@ interface SignalRow {
   error: string | null;
 }
 
-const toIso = (value: Date | string): string => new Date(value).toISOString();
+const toIso = (value: Date | string): string => toIsoString(value);
 
 const toRecord = (row: SignalRow): SignalRecord => ({
   id: row.id,

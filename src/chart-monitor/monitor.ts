@@ -1,4 +1,6 @@
+import moment from 'moment-timezone';
 import type { Notifier } from '../shared/discord.js';
+import { toIsoString } from '../shared/time.js';
 import type { ChartSnapshot, StudySnapshot } from './chart-reader.js';
 import type { MonitorConfig } from './config.js';
 import type { PendingLog } from './fallback.js';
@@ -114,7 +116,7 @@ async function flushPending(deps: MonitorDeps): Promise<Set<string>> {
 
   try {
     await store.recordAnnounced(
-      entries.map((entry) => ({ signal: entry.signal, announcedAt: new Date(entry.announcedAt) })),
+      entries.map((entry) => ({ signal: entry.signal, announcedAt: moment(entry.announcedAt).toDate() })),
     );
     await fallback.remove(keys);
     log.info({ count: entries.length }, 'copied pending signals from the fallback file into the database');
@@ -151,7 +153,7 @@ async function announce(
       { err: errorMessage(err), key: signal.key },
       'could not record the signal in the database; keeping it in the fallback file',
     );
-    await fallback.append({ signal, announcedAt: detectedAt.toISOString() });
+    await fallback.append({ signal, announcedAt: toIsoString(detectedAt) });
   }
   log.info({ direction: signal.direction, key: signal.key }, 'signal sent to Discord');
   return null;
@@ -170,7 +172,7 @@ async function announce(
  */
 export async function checkOnce(deps: MonitorDeps): Promise<CheckResult> {
   const { config, store } = deps;
-  const detectedAt = (deps.now ?? (() => new Date()))();
+  const detectedAt = (deps.now ?? (() => moment().toDate()))();
   const context = noticeContext(config);
   const health = await store.loadHealth();
 

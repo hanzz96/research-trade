@@ -1,5 +1,7 @@
+import moment from 'moment-timezone';
 import type { FastifyInstance } from 'fastify';
 import { tokensMatch } from '../shared/auth.js';
+import { toIsoString } from '../shared/time.js';
 import type { Config } from '../shared/config.js';
 import type { RejectionLog } from '../shared/rejections.js';
 import { buildIdempotencyKey } from './idempotency.js';
@@ -70,7 +72,7 @@ export function registerAlertRoutes(
       return reject(400, 'unsupported_timeframe', payload.timeframe);
     }
 
-    const ageMs = Date.now() - Date.parse(payload.timestamp);
+    const ageMs = moment().diff(moment.utc(payload.timestamp));
     if (ageMs > maxAgeMs) return reject(400, 'stale_signal', payload.timestamp);
     if (ageMs < -MAX_FUTURE_SKEW_MS) return reject(400, 'timestamp_in_future', payload.timestamp);
 
@@ -81,7 +83,7 @@ export function registerAlertRoutes(
         symbol: payload.symbol.toUpperCase(),
         timeframe: payload.timeframe,
         direction: payload.direction,
-        candleTimestamp: new Date(payload.timestamp).toISOString(),
+        candleTimestamp: toIsoString(payload.timestamp),
         snapshot: {
           price: payload.price,
           indicators: payload.indicators,
