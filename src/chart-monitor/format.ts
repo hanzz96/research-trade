@@ -1,7 +1,7 @@
 import { displaySymbol, displayTimeframe, formatTime } from '../shared/display.js';
 import type { ChartSignal } from './signals.js';
 
-interface Context {
+export interface NoticeContext {
   symbol: string;
   timeframe: string;
   timeZone: string;
@@ -10,7 +10,7 @@ interface Context {
 const fixed = (value: number) => value.toFixed(2);
 
 /** Discord message for a signal read from the chart. Same facts as the webhook alert, in Indonesian. */
-export function formatSignalNotice(signal: ChartSignal, detectedAt: Date, context: Context): string {
+export function formatSignalNotice(signal: ChartSignal, detectedAt: Date, context: NoticeContext): string {
   const lines = [
     `**${displaySymbol(context.symbol)} — ${signal.direction} CANDIDATE** (${displayTimeframe(context.timeframe)})`,
     `Terdeteksi: ${formatTime(detectedAt.toISOString(), context.timeZone)} (${context.timeZone})`,
@@ -38,7 +38,7 @@ export function formatSignalNotice(signal: ChartSignal, detectedAt: Date, contex
   return lines.join('\n');
 }
 
-export function formatProblemNotice(reason: string, failures: number, context: Context): string {
+export function formatProblemNotice(reason: string, failures: number, context: NoticeContext): string {
   return [
     `⚠️ **Pemantauan ${displaySymbol(context.symbol)} ${displayTimeframe(context.timeframe)} bermasalah**`,
     `Gagal membaca chart TradingView ${failures} kali berturut-turut: ${reason}`,
@@ -46,6 +46,6 @@ export function formatProblemNotice(reason: string, failures: number, context: C
   ].join('\n');
 }
 
-export function formatRecoveryNotice(context: Context): string {
+export function formatRecoveryNotice(context: NoticeContext): string {
   return `✅ Pemantauan ${displaySymbol(context.symbol)} ${displayTimeframe(context.timeframe)} pulih dan membaca chart lagi.`;
 }

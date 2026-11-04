@@ -2,9 +2,14 @@ import type { Notifier } from '../shared/discord.js';
 import type { ChartSnapshot, StudySnapshot } from './chart-reader.js';
 import type { MonitorConfig } from './config.js';
 import type { PendingLog } from './fallback.js';
-import { formatProblemNotice, formatRecoveryNotice, formatSignalNotice } from './format.js';
-import { extractSignals } from './signals.js';
-import type { MonitorStore } from './store.js';
+import {
+  formatProblemNotice,
+  formatRecoveryNotice,
+  formatSignalNotice,
+  type NoticeContext,
+} from './format.js';
+import { extractSignals, type ChartSignal } from './signals.js';
+import type { MonitorHealth, MonitorStore } from './store.js';
 
 interface Logger {
   info(obj: object, msg?: string): void;
@@ -51,6 +56,107 @@ function requireStudy(snapshot: ChartSnapshot, config: MonitorDeps['config']): S
   return snapshot.study;
 }
 
+const noticeContext = (config: MonitorDeps['config']): NoticeContext => ({
+  symbol: config.MONITOR_SYMBOL,
+  timeframe: config.MONITOR_TIMEFRAME,
+  timeZone: config.DISPLAY_TIMEZONE,
+});
+
+/**
+ * Sends a notice about the monitor itself. A notice is not worth stopping a check for, so a
+ * failure is only logged. Returns whether it went out.
+ */
+async function sendNotice(deps: MonitorDeps, message: string, what: string): Promise<boolean> {
+  try {
+    await deps.notifier.send(message);
+    return true;
+  } catch (err) {
+    deps.log.error({ err: errorMessage(err) }, `could not send the ${what}`);
+    return false;
+  }
+}
+
+/** The chart could not be read: count it, and send the "monitor is down" notice once enough pile up. */
+async function recordReadFailure(
+  deps: MonitorDeps,
+  health: MonitorHealth,
+  context: NoticeContext,
+  reason: string,
+): Promise<CheckResult> {
+  const failures = health.failures + 1;
+  let alerted = health.alerted;
+  if (failures >= FAILURES_BEFORE_NOTICE && !alerted) {
+    alerted = await sendNotice(deps, formatProblemNotice(reason, failures, context), 'monitor problem notice');
+  }
+  await deps.store.saveHealth({ failures, alerted });
+  deps.log.warn({ reason, failures }, 'could not read the chart');
+  return { status: 'failed', reason };
+}
+
+/** The chart was read: if the monitor had been failing, say it recovered and reset the count. */
+async function settleHealth(deps: MonitorDeps, health: MonitorHealth, context: NoticeContext): Promise<void> {
+  if (health.failures === 0 && !health.alerted) return;
+  if (health.alerted) await sendNotice(deps, formatRecoveryNotice(context), 'recovery notice');
+  await deps.store.saveHealth({ failures: 0, alerted: false });
+}
+
+/**
+ * Copies the signals waiting in the fallback file into the database. Returns their keys: they
+ * count as seen whether or not the copy worked, so nothing is announced twice.
+ */
+async function flushPending(deps: MonitorDeps): Promise<Set<string>> {
+  const { store, fallback, log } = deps;
+  const { entries, skipped } = await fallback.read();
+  if (skipped > 0) log.warn({ skipped }, 'ignored damaged lines in the fallback file');
+
+  const keys = new Set(entries.map((entry) => entry.signal.key));
+  if (entries.length === 0) return keys;
+
+  try {
+    await store.recordAnnounced(
+      entries.map((entry) => ({ signal: entry.signal, announcedAt: new Date(entry.announcedAt) })),
+    );
+    await fallback.remove(keys);
+    log.info({ count: entries.length }, 'copied pending signals from the fallback file into the database');
+  } catch (err) {
+    log.warn({ err: errorMessage(err) }, 'could not copy pending signals into the database yet');
+  }
+  return keys;
+}
+
+/**
+ * Sends one signal to Discord, then remembers it. If the database refuses the record, the signal
+ * goes to the fallback file instead, because it was announced and must not be forgotten.
+ * Returns null when delivered, or why Discord refused it (the signal is then retried next check).
+ */
+async function announce(
+  deps: MonitorDeps,
+  signal: ChartSignal,
+  detectedAt: Date,
+  context: NoticeContext,
+): Promise<string | null> {
+  const { notifier, store, fallback, log } = deps;
+  try {
+    await notifier.send(formatSignalNotice(signal, detectedAt, context));
+  } catch (err) {
+    const reason = errorMessage(err);
+    log.error({ err: reason, key: signal.key }, 'could not send the signal to Discord');
+    return `Discord: ${reason}`;
+  }
+
+  try {
+    await store.recordAnnounced([{ signal, announcedAt: detectedAt }]);
+  } catch (err) {
+    log.error(
+      { err: errorMessage(err), key: signal.key },
+      'could not record the signal in the database; keeping it in the fallback file',
+    );
+    await fallback.append({ signal, announcedAt: detectedAt.toISOString() });
+  }
+  log.info({ direction: signal.direction, key: signal.key }, 'signal sent to Discord');
+  return null;
+}
+
 /**
  * One check: read the chart, announce signals not seen before, remember them.
  * The first successful read only records what is already on the chart, so old signals are never
@@ -59,96 +165,37 @@ function requireStudy(snapshot: ChartSnapshot, config: MonitorDeps['config']): S
  *
  * If the message went out but the database refused the record, the signal is written to the
  * fallback file instead. Every check reads that file as well as the database: its keys count as
- * seen (so nothing is announced twice) and its entries are copied into the database, together
- * with any new signals, as soon as the database accepts them.
+ * seen (so nothing is announced twice) and its entries are copied into the database, before new
+ * signals are announced, as soon as the database accepts them.
  */
 export async function checkOnce(deps: MonitorDeps): Promise<CheckResult> {
-  const { config, notifier, store, fallback, log } = deps;
+  const { config, store } = deps;
   const detectedAt = (deps.now ?? (() => new Date()))();
-  const context = {
-    symbol: config.MONITOR_SYMBOL,
-    timeframe: config.MONITOR_TIMEFRAME,
-    timeZone: config.DISPLAY_TIMEZONE,
-  };
+  const context = noticeContext(config);
   const health = await store.loadHealth();
 
   let study: StudySnapshot;
   try {
     study = requireStudy(await deps.readChart(), config);
   } catch (err) {
-    const reason = errorMessage(err);
-    const failures = health.failures + 1;
-    let alerted = health.alerted;
-    if (failures >= FAILURES_BEFORE_NOTICE && !alerted) {
-      try {
-        await notifier.send(formatProblemNotice(reason, failures, context));
-        alerted = true;
-      } catch (sendErr) {
-        log.error({ err: errorMessage(sendErr) }, 'could not send the monitor problem notice');
-      }
-    }
-    await store.saveHealth({ failures, alerted });
-    log.warn({ reason, failures }, 'could not read the chart');
-    return { status: 'failed', reason };
+    return recordReadFailure(deps, health, context, errorMessage(err));
   }
-
-  if (health.failures > 0 || health.alerted) {
-    if (health.alerted) {
-      try {
-        await notifier.send(formatRecoveryNotice(context));
-      } catch (sendErr) {
-        log.error({ err: errorMessage(sendErr) }, 'could not send the recovery notice');
-      }
-    }
-    await store.saveHealth({ failures: 0, alerted: false });
-  }
+  await settleHealth(deps, health, context);
 
   const signals = extractSignals(study);
-
   if (!health.baselined) {
     await store.recordBaseline(signals);
     return { status: 'baseline', signals: signals.length };
   }
 
-  const pending = await fallback.read();
-  if (pending.skipped > 0) {
-    log.warn({ skipped: pending.skipped }, 'ignored damaged lines in the fallback file');
-  }
-  if (pending.entries.length > 0) {
-    try {
-      await store.recordAnnounced(
-        pending.entries.map((entry) => ({ signal: entry.signal, announcedAt: new Date(entry.announcedAt) })),
-      );
-      await fallback.remove(new Set(pending.entries.map((entry) => entry.signal.key)));
-      log.info({ count: pending.entries.length }, 'copied pending signals from the fallback file into the database');
-    } catch (err) {
-      log.warn({ err: errorMessage(err) }, 'could not copy pending signals into the database yet');
-    }
-  }
-
-  // The file counts as seen too, whether or not the copy above worked.
+  // Signals waiting in the fallback file were already announced, so they are not new either.
+  const pendingKeys = await flushPending(deps);
   const seen = await store.seenKeys();
-  for (const entry of pending.entries) seen.add(entry.signal.key);
-  const fresh = signals.filter((signal) => !seen.has(signal.key));
-  let sent = 0;
+  const fresh = signals.filter((signal) => !seen.has(signal.key) && !pendingKeys.has(signal.key));
+
   for (const signal of fresh) {
-    try {
-      await notifier.send(formatSignalNotice(signal, detectedAt, context));
-    } catch (err) {
-      // Leave it unremembered so the next check retries it.
-      const reason = errorMessage(err);
-      log.error({ err: reason, key: signal.key }, 'could not send the signal to Discord');
-      return { status: 'failed', reason: `Discord: ${reason}` };
-    }
-    try {
-      await store.recordAnnounced([{ signal, announcedAt: detectedAt }]);
-    } catch (err) {
-      // Already announced, so it must not be forgotten: keep it in the file for the next check.
-      log.error({ err: errorMessage(err), key: signal.key }, 'could not record the signal in the database; keeping it in the fallback file');
-      await fallback.append({ signal, announcedAt: detectedAt.toISOString() });
-    }
-    sent += 1;
-    log.info({ direction: signal.direction, key: signal.key }, 'signal sent to Discord');
+    const failure = await announce(deps, signal, detectedAt, context);
+    if (failure !== null) return { status: 'failed', reason: failure };
   }
-  return { status: 'ok', newSignals: fresh.length, sent };
+  return { status: 'ok', newSignals: fresh.length, sent: fresh.length };
 }
