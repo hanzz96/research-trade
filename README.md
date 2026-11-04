@@ -114,6 +114,9 @@ and a green `TP` label with the USD reward. The label of the level that was touc
 Stop = swing low/high of the last 10 candles +/- 0.5 x ATR, target = 1.5 x the stop distance. The
 same levels go into the alert as `plan.stop` / `plan.target` (optional in the payload) and appear in
 the Discord message. If you created alerts earlier, recreate them to pick up the new message.
+The helper is drawn only on the last 1500 bars (input "Draw the helper only on the last N bars",
+0 = all), because drawing every signal of the whole history made TradingView warn that the script
+is close to the plan's runtime limit. Signals and alerts are not affected.
 
 An alert fires only on the **first confirmed candle** where all conditions become true, then stays
 quiet for a cooldown (4 bars). Without this, a trend would alert on every candle. These parameters
