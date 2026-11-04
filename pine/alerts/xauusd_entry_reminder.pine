@@ -36,6 +36,7 @@ cooldownBars  = input.int(4, "Cooldown after a signal (bars)", minval = 0, group
 showPlan      = input.bool(true, "Draw entry, stop and target on a signal", group = GRP_PLAN)
 qtyOz         = input.float(1.0, "Size in oz for the risk label (0.01 lot = 1 oz)", minval = 0.01, group = GRP_PLAN)
 riskBudgetUsd = input.float(2.5, "Risk budget per trade (USD, warning only)", minval = 0.01, step = 0.25, group = GRP_PLAN)
+drawBars      = input.int(1500, "Draw the helper only on the last N bars (0 = all)", minval = 0, group = GRP_PLAN, tooltip = "Drawing for every signal in the whole history is the slow part of this script. TradingView keeps only about the last 50 signals anyway. Signals and alerts are not affected.")
 
 // ── Indicators ────────────────────────────────────────────────────────────────
 emaFast = ta.ema(close, emaFastLen)
@@ -93,7 +94,10 @@ var line targetLine = na
 var label stopLabel = na
 var label targetLabel = na
 
-if showPlan and (buySignal or sellSignal)
+// Old history is not drawn: it is the expensive part, and only the latest signals stay on the chart.
+drawRecent = drawBars == 0 or bar_index > last_bar_index - drawBars
+
+if showPlan and drawRecent and (buySignal or sellSignal)
     planDir    := buySignal ? 1 : -1
     planBar    := bar_index
     planStop   := buySignal ? longStop : shortStop
