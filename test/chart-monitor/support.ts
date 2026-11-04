@@ -1,6 +1,6 @@
 import type { ChartSnapshot, StudySnapshot } from '../../src/chart-monitor/chart-reader.js';
-import type { MonitorState, StateStore } from '../../src/chart-monitor/state.js';
-import { emptyState } from '../../src/chart-monitor/state.js';
+import type { ChartSignal } from '../../src/chart-monitor/signals.js';
+import type { MonitorHealth, MonitorStore } from '../../src/chart-monitor/store.js';
 import type { Notifier } from '../../src/shared/discord.js';
 
 interface SignalDrawing {
@@ -75,15 +75,30 @@ export class FakeNotifier implements Notifier {
   }
 }
 
-export class MemoryState implements StateStore {
-  state: MonitorState = emptyState();
+/** In-memory MonitorStore: the same behaviour as the Postgres one, for the check-flow tests. */
+export class MemoryStore implements MonitorStore {
+  health: MonitorHealth = { baselined: false, failures: 0, alerted: false };
+  readonly signals = new Map<string, 'baseline' | 'announced'>();
 
-  async load(): Promise<MonitorState> {
-    return structuredClone(this.state);
+  async loadHealth(): Promise<MonitorHealth> {
+    return { ...this.health };
   }
 
-  async save(state: MonitorState): Promise<void> {
-    this.state = structuredClone(state);
+  async saveHealth({ failures, alerted }: Pick<MonitorHealth, 'failures' | 'alerted'>): Promise<void> {
+    this.health = { ...this.health, failures, alerted };
+  }
+
+  async seenKeys(): Promise<Set<string>> {
+    return new Set(this.signals.keys());
+  }
+
+  async recordBaseline(signals: readonly ChartSignal[]): Promise<void> {
+    for (const signal of signals) if (!this.signals.has(signal.key)) this.signals.set(signal.key, 'baseline');
+    this.health = { ...this.health, baselined: true };
+  }
+
+  async recordAnnounced(signal: ChartSignal): Promise<void> {
+    if (!this.signals.has(signal.key)) this.signals.set(signal.key, 'announced');
   }
 }
 

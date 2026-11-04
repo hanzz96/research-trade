@@ -5,6 +5,10 @@ const envSchema = z.object({
   DISCORD_WEBHOOK_URL: z
     .url()
     .refine((url) => url.startsWith('https://'), 'must be an https:// URL'),
+  // Where the monitor remembers the signals it has seen (same database as the rest of the app).
+  DATABASE_URL: z
+    .string()
+    .refine((url) => /^postgres(ql)?:\/\//.test(url), 'must be a postgres:// or postgresql:// URL'),
   // TradingView Desktop must be started with --remote-debugging-port=<CDP_PORT>.
   CDP_HOST: z.string().default('127.0.0.1'),
   CDP_PORT: z.coerce.number().int().min(1).max(65535).default(9222),
@@ -19,7 +23,6 @@ const envSchema = z.object({
     .refine((value) => 60 % Number(value) === 0, 'must divide 60 (for example 15, 30 or 60)')
     .default('30'),
   MONITOR_STUDY: z.string().min(1).default('XAUUSD Entry Reminder'),
-  MONITOR_STATE_FILE: z.string().min(1).default('.monitor-state.json'),
   // Seconds to wait after a candle closes before reading the chart.
   MONITOR_DELAY_SECONDS: z.coerce.number().int().min(5).max(600).default(60),
   DISPLAY_TIMEZONE: timezone,

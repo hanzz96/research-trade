@@ -10,9 +10,6 @@ data/
 !.env.example
 # ngrok config holds the account authtoken
 ngrok.yml
-# chart monitor remembers which signals it already announced
-.monitor-state.json
-.monitor-state.json.tmp
 # local backtest strategies, kept out of version control
 pine/backtest/
 .DS_Store

@@ -1,44 +1,15 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { buildReadExpression, readChart } from '../../src/chart-monitor/chart-reader.js';
 import { loadMonitorConfig } from '../../src/chart-monitor/config.js';
-import { FileStateStore, emptyState } from '../../src/chart-monitor/state.js';
 import { BUY_A } from './support.js';
-
-describe('FileStateStore', () => {
-  let directory: string;
-  beforeAll(async () => {
-    directory = await mkdtemp(join(tmpdir(), 'chart-monitor-'));
-  });
-  afterAll(async () => {
-    await rm(directory, { recursive: true, force: true });
-  });
-
-  it('starts empty when there is no file yet', async () => {
-    expect(await new FileStateStore(join(directory, 'missing.json')).load()).toEqual(emptyState());
-  });
-
-  it('saves and loads what it was given', async () => {
-    const store = new FileStateStore(join(directory, 'state.json'));
-    const state = { baselined: true, seen: ['BUY|1.00|2.00'], failures: 1, alerted: false };
-    await store.save(state);
-    expect(await store.load()).toEqual(state);
-  });
-
-  it('refuses a damaged file instead of silently starting over', async () => {
-    const path = join(directory, 'damaged.json');
-    await writeFile(path, JSON.stringify({ seen: 'nope' }));
-    await expect(new FileStateStore(path).load()).rejects.toThrow('not valid');
-  });
-});
 
 describe('loadMonitorConfig', () => {
   const webhook = 'https://discord.com/api/webhooks/123/secret-token';
+  const database = 'postgres://user:pass@localhost:5432/trade_view';
+  const base = { DISCORD_WEBHOOK_URL: webhook, DATABASE_URL: database };
 
   it('fills in the defaults', () => {
-    expect(loadMonitorConfig({ DISCORD_WEBHOOK_URL: webhook })).toMatchObject({
+    expect(loadMonitorConfig(base)).toMatchObject({
       CDP_HOST: '127.0.0.1',
       CDP_PORT: 9222,
       MONITOR_SYMBOL: 'XAUUSD',
@@ -49,25 +20,27 @@ describe('loadMonitorConfig', () => {
     });
   });
 
-  it('needs an https Discord webhook', () => {
-    expect(() => loadMonitorConfig({})).toThrow('DISCORD_WEBHOOK_URL');
-    expect(() => loadMonitorConfig({ DISCORD_WEBHOOK_URL: 'http://example.com/hook' })).toThrow(
+  it('needs an https Discord webhook and a Postgres URL', () => {
+    expect(() => loadMonitorConfig({ DATABASE_URL: database })).toThrow('DISCORD_WEBHOOK_URL');
+    expect(() => loadMonitorConfig({ ...base, DISCORD_WEBHOOK_URL: 'http://example.com/hook' })).toThrow(
       'https://',
     );
+    expect(() => loadMonitorConfig({ DISCORD_WEBHOOK_URL: webhook })).toThrow('DATABASE_URL');
+    expect(() => loadMonitorConfig({ ...base, DATABASE_URL: 'mysql://x' })).toThrow('postgres://');
   });
 
   it('only accepts candle lengths that divide the hour', () => {
-    expect(loadMonitorConfig({ DISCORD_WEBHOOK_URL: webhook, MONITOR_TIMEFRAME: '15' }).MONITOR_TIMEFRAME).toBe('15');
-    expect(() => loadMonitorConfig({ DISCORD_WEBHOOK_URL: webhook, MONITOR_TIMEFRAME: '45' })).toThrow('divide 60');
-    expect(() => loadMonitorConfig({ DISCORD_WEBHOOK_URL: webhook, MONITOR_TIMEFRAME: '1D' })).toThrow('minutes');
+    expect(loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: '15' }).MONITOR_TIMEFRAME).toBe('15');
+    expect(() => loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: '45' })).toThrow('divide 60');
+    expect(() => loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: '1D' })).toThrow('minutes');
   });
 
   it('does not echo the webhook URL in its errors', () => {
-    expect(() => loadMonitorConfig({ DISCORD_WEBHOOK_URL: webhook, MONITOR_TIMEFRAME: 'x' })).toThrow(
+    expect(() => loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: 'x' })).toThrow(
       /MONITOR_TIMEFRAME/,
     );
     try {
-      loadMonitorConfig({ DISCORD_WEBHOOK_URL: webhook, MONITOR_TIMEFRAME: 'x' });
+      loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: 'x' });
     } catch (err) {
       expect(String(err)).not.toContain('secret-token');
     }

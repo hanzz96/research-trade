@@ -5,7 +5,7 @@ import {
   BUY_A,
   BUY_B,
   FakeNotifier,
-  MemoryState,
+  MemoryStore,
   SELL_C,
   combine,
   monitorConfig,
@@ -15,14 +15,14 @@ import {
 
 describe('checkOnce', () => {
   let notifier: FakeNotifier;
-  let state: MemoryState;
+  let store: MemoryStore;
   let chart: ChartSnapshot | Error;
 
   const check = () =>
     checkOnce({
       config: monitorConfig,
       notifier,
-      state,
+      store,
       log: silentLog,
       now: () => new Date('2026-11-04T09:01:00Z'),
       readChart: async () => {
@@ -33,7 +33,7 @@ describe('checkOnce', () => {
 
   beforeEach(() => {
     notifier = new FakeNotifier();
-    state = new MemoryState();
+    store = new MemoryStore();
     chart = snapshotOf(combine(SELL_C, BUY_A));
   });
 
@@ -41,7 +41,11 @@ describe('checkOnce', () => {
     it('only records what is already on the chart the first time', async () => {
       expect(await check()).toEqual({ status: 'baseline', signals: 2 });
       expect(notifier.sent).toEqual([]);
-      expect(state.state).toMatchObject({ baselined: true, seen: ['SELL|3961.68|3858.98', 'BUY|3911.83|4013.65'] });
+      expect(store.health.baselined).toBe(true);
+      expect([...store.signals]).toEqual([
+        ['SELL|3961.68|3858.98', 'baseline'],
+        ['BUY|3911.83|4013.65', 'baseline'],
+      ]);
     });
 
     it('announces a new signal once and not again on the next check', async () => {
@@ -94,8 +98,8 @@ describe('checkOnce', () => {
 
       expect(await check()).toMatchObject({ status: 'failed' });
       expect(notifier.sent).toHaveLength(1);
-      expect(state.state.seen).toContain('SELL|3961.68|3858.98');
-      expect(state.state.seen).not.toContain('BUY|3913.52|4009.56');
+      expect(store.signals.get('SELL|3961.68|3858.98')).toBe('announced');
+      expect(store.signals.has('BUY|3913.52|4009.56')).toBe(false);
     });
   });
 
@@ -107,13 +111,13 @@ describe('checkOnce', () => {
       ['a page error', snapshotOf(null, { error: 'boom' }), 'reported an error: boom'],
     ])('fails for %s without changing what it remembers', async (_name, snapshot, reason) => {
       await check();
-      const before = state.state.seen;
+      const before = [...store.signals];
       chart = snapshot;
 
       const result = await check();
       expect(result).toMatchObject({ status: 'failed' });
       expect(result.status === 'failed' && result.reason).toContain(reason);
-      expect(state.state.seen).toEqual(before);
+      expect([...store.signals]).toEqual(before);
       expect(notifier.sent).toEqual([]);
     });
 
@@ -144,13 +148,13 @@ describe('checkOnce', () => {
       expect(await check()).toEqual({ status: 'ok', newSignals: 0, sent: 0 });
       expect(notifier.sent).toHaveLength(2);
       expect(notifier.sent[1]).toContain('pulih');
-      expect(state.state).toMatchObject({ failures: 0, alerted: false });
+      expect(store.health).toMatchObject({ failures: 0, alerted: false });
     });
 
     it('does not announce the chart as new signals if the very first reads failed', async () => {
       chart = new Error('no TradingView chart tab is open');
       await check();
-      expect(state.state.baselined).toBe(false);
+      expect(store.health.baselined).toBe(false);
 
       chart = snapshotOf(combine(SELL_C, BUY_A));
       expect(await check()).toEqual({ status: 'baseline', signals: 2 });

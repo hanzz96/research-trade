@@ -11,7 +11,7 @@ src/
   forward-test/  MT5 bars -> Postgres -> paper signals and results (ingest route, bar store;
                  the strategy engine and paper-trade tracker will live here)
   chart-monitor/ separate process (own main.ts): reads signals off the TradingView Desktop chart
-                 over CDP and posts them to Discord; no server, no database
+                 over CDP, posts them to Discord and remembers them in Postgres; no web server
   shared/        config, db access, auth, migration runner, rejection log, Discord notifier,
                  display helpers
   server.ts      builds the HTTP app and registers each feature's routes (wiring only)
@@ -28,6 +28,7 @@ mt5/             MetaTrader 5 Expert Advisors in MQL5 (data sender, no order fun
 - A new feature gets its own folder under `src/` and `test/`, with its own `routes.ts` and
   `migrations.ts`. Register it only in `server.ts` and `src/migrations.ts`.
 - Features may import from `shared/`, never from each other. Shared code lives in `shared/`.
+  A process entry (`index.ts`, `chart-monitor/main.ts`) is wiring and may also import `migrations.ts`.
 - Migrations are append-only, ids are unique across all features, and applied ones are never edited.
 - Secrets live only in `.env` (git-ignored). Never log tokens or webhook URLs.
 - Tidy as you go: put new code in the right folder, update the layout notes here and in

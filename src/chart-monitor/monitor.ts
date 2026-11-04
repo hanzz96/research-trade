@@ -3,7 +3,7 @@ import type { ChartSnapshot, StudySnapshot } from './chart-reader.js';
 import type { MonitorConfig } from './config.js';
 import { formatProblemNotice, formatRecoveryNotice, formatSignalNotice } from './format.js';
 import { extractSignals } from './signals.js';
-import { MAX_SEEN, type MonitorState, type StateStore } from './state.js';
+import type { MonitorStore } from './store.js';
 
 interface Logger {
   info(obj: object, msg?: string): void;
@@ -18,7 +18,7 @@ export interface MonitorDeps {
   >;
   readChart: () => Promise<ChartSnapshot>;
   notifier: Notifier;
-  state: StateStore;
+  store: MonitorStore;
   log: Logger;
   now?: () => Date;
 }
@@ -30,6 +30,8 @@ export type CheckResult =
 
 /** A "monitor is down" notice goes out after this many consecutive failed reads, then once. */
 const FAILURES_BEFORE_NOTICE = 2;
+
+const errorMessage = (err: unknown) => (err instanceof Error ? err.message : 'unknown error');
 
 /** The chart must show the expected symbol and timeframe with the indicator on it. */
 function requireStudy(snapshot: ChartSnapshot, config: MonitorDeps['config']): StudySnapshot {
@@ -49,25 +51,26 @@ function requireStudy(snapshot: ChartSnapshot, config: MonitorDeps['config']): S
 /**
  * One check: read the chart, announce signals not seen before, remember them.
  * The first successful read only records what is already on the chart, so old signals are never
- * announced as new. A signal is remembered only after its Discord message went out.
+ * announced as new. A signal is remembered right after its Discord message was delivered, so a
+ * failed send is retried at the next check.
  */
 export async function checkOnce(deps: MonitorDeps): Promise<CheckResult> {
-  const { config, notifier, log } = deps;
+  const { config, notifier, store, log } = deps;
   const detectedAt = (deps.now ?? (() => new Date()))();
   const context = {
     symbol: config.MONITOR_SYMBOL,
     timeframe: config.MONITOR_TIMEFRAME,
     timeZone: config.DISPLAY_TIMEZONE,
   };
-  const state = await deps.state.load();
+  const health = await store.loadHealth();
 
   let study: StudySnapshot;
   try {
     study = requireStudy(await deps.readChart(), config);
   } catch (err) {
-    const reason = err instanceof Error ? err.message : 'unknown error';
-    const failures = state.failures + 1;
-    let alerted = state.alerted;
+    const reason = errorMessage(err);
+    const failures = health.failures + 1;
+    let alerted = health.alerted;
     if (failures >= FAILURES_BEFORE_NOTICE && !alerted) {
       try {
         await notifier.send(formatProblemNotice(reason, failures, context));
@@ -76,51 +79,44 @@ export async function checkOnce(deps: MonitorDeps): Promise<CheckResult> {
         log.error({ err: errorMessage(sendErr) }, 'could not send the monitor problem notice');
       }
     }
-    await deps.state.save({ ...state, failures, alerted });
+    await store.saveHealth({ failures, alerted });
     log.warn({ reason, failures }, 'could not read the chart');
     return { status: 'failed', reason };
   }
 
-  const next: MonitorState = { ...state, failures: 0, alerted: false };
-  if (state.alerted) {
-    try {
-      await notifier.send(formatRecoveryNotice(context));
-    } catch (sendErr) {
-      log.error({ err: errorMessage(sendErr) }, 'could not send the recovery notice');
+  if (health.failures > 0 || health.alerted) {
+    if (health.alerted) {
+      try {
+        await notifier.send(formatRecoveryNotice(context));
+      } catch (sendErr) {
+        log.error({ err: errorMessage(sendErr) }, 'could not send the recovery notice');
+      }
     }
+    await store.saveHealth({ failures: 0, alerted: false });
   }
 
   const signals = extractSignals(study);
 
-  if (!state.baselined) {
-    await deps.state.save({
-      ...next,
-      baselined: true,
-      seen: signals.map((signal) => signal.key).slice(-MAX_SEEN),
-    });
+  if (!health.baselined) {
+    await store.recordBaseline(signals);
     return { status: 'baseline', signals: signals.length };
   }
 
-  const seen = new Set(state.seen);
+  const seen = await store.seenKeys();
   const fresh = signals.filter((signal) => !seen.has(signal.key));
-  const sentKeys: string[] = [];
-  let deliveryError: string | null = null;
+  let sent = 0;
   for (const signal of fresh) {
     try {
       await notifier.send(formatSignalNotice(signal, detectedAt, context));
-      sentKeys.push(signal.key);
-      log.info({ direction: signal.direction, key: signal.key }, 'signal sent to Discord');
     } catch (err) {
-      // Leave it unseen so the next check retries it.
-      deliveryError = errorMessage(err);
-      log.error({ err: deliveryError, key: signal.key }, 'could not send the signal to Discord');
-      break;
+      // Leave it unremembered so the next check retries it.
+      const reason = errorMessage(err);
+      log.error({ err: reason, key: signal.key }, 'could not send the signal to Discord');
+      return { status: 'failed', reason: `Discord: ${reason}` };
     }
+    await store.recordAnnounced(signal);
+    sent += 1;
+    log.info({ direction: signal.direction, key: signal.key }, 'signal sent to Discord');
   }
-
-  await deps.state.save({ ...next, seen: [...state.seen, ...sentKeys].slice(-MAX_SEEN) });
-  if (deliveryError) return { status: 'failed', reason: `Discord: ${deliveryError}` };
-  return { status: 'ok', newSignals: fresh.length, sent: sentKeys.length };
+  return { status: 'ok', newSignals: fresh.length, sent };
 }
-
-const errorMessage = (err: unknown) => (err instanceof Error ? err.message : 'unknown error');

@@ -134,7 +134,8 @@ the strategy engine and paper-trade tracker. See [docs/PLAN.md](docs/PLAN.md).
 
 TradingView only sends webhooks on a paid plan. As an alternative, `src/chart-monitor/` is a small
 separate process that reads the signals the indicator draws on the **TradingView Desktop** chart and
-posts new ones to Discord. It needs no server and no database; only `DISCORD_WEBHOOK_URL` in `.env`.
+posts new ones to Discord. It needs no web server; it uses `DISCORD_WEBHOOK_URL` and `DATABASE_URL`
+from `.env` (the PostgreSQL database must be up; its tables are created on start).
 
 1. Start TradingView Desktop with the debug port, for example
    `/Applications/TradingView.app/Contents/MacOS/TradingView --remote-debugging-port=9222`.
@@ -148,7 +149,10 @@ How it behaves:
 
 - The first successful read only records the signals already on the chart; nothing old is announced.
 - A signal is remembered only after its Discord message was delivered, so a failed send is retried
-  at the next check. Memory lives in `.monitor-state.json` (git-ignored).
+  at the next check. Memory lives in PostgreSQL: `chart_signals` (every signal seen, with entry, SL,
+  TP, whether it was only part of the first read or announced, and when) and `chart_monitor_state`
+  (first read done, recent failures). The table doubles as a log of announced signals, useful for
+  the forward test later.
 - If the chart cannot be read twice in a row (TradingView closed, other symbol or timeframe, indicator
   removed) it posts one notice to Discord, and one more when it recovers.
 - It reads TradingView's internal chart model, so a TradingView update can break it; the tests cover

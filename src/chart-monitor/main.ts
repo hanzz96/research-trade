@@ -1,12 +1,14 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pino } from 'pino';
+import { migrate } from '../migrations.js';
+import { PgDb } from '../shared/db.js';
 import { DiscordNotifier } from '../shared/discord.js';
 import { evaluateInChart } from './cdp.js';
 import { readChart } from './chart-reader.js';
 import { loadMonitorConfig } from './config.js';
 import { checkOnce, type CheckResult } from './monitor.js';
 import { nextRunAt } from './schedule.js';
-import { FileStateStore } from './state.js';
+import { PgMonitorStore } from './store.js';
 
 /**
  * Entry point of the chart monitor, a separate process from the webhook server.
@@ -16,46 +18,53 @@ import { FileStateStore } from './state.js';
 async function main(): Promise<void> {
   const once = process.argv.includes('--once');
   const config = loadMonitorConfig();
-  const log = pino({ redact: ['webhookUrl', 'DISCORD_WEBHOOK_URL'] });
+  const log = pino({ redact: ['webhookUrl', 'DISCORD_WEBHOOK_URL', 'DATABASE_URL'] });
 
-  const deps = {
-    config,
-    log,
-    notifier: new DiscordNotifier(config.DISCORD_WEBHOOK_URL),
-    state: new FileStateStore(config.MONITOR_STATE_FILE),
-    readChart: () =>
-      readChart(
-        (expression) => evaluateInChart({ host: config.CDP_HOST, port: config.CDP_PORT }, expression),
-        config.MONITOR_STUDY,
-      ),
-  };
+  const db = new PgDb(config.DATABASE_URL);
+  try {
+    await migrate(db);
 
-  const stop = new AbortController();
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => stop.abort());
+    const deps = {
+      config,
+      log,
+      notifier: new DiscordNotifier(config.DISCORD_WEBHOOK_URL),
+      store: new PgMonitorStore(db, config.MONITOR_SYMBOL, config.MONITOR_TIMEFRAME),
+      readChart: () =>
+        readChart(
+          (expression) => evaluateInChart({ host: config.CDP_HOST, port: config.CDP_PORT }, expression),
+          config.MONITOR_STUDY,
+        ),
+    };
 
-  while (!stop.signal.aborted) {
-    let result: CheckResult;
-    try {
-      result = await checkOnce(deps);
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : 'unknown error';
-      log.error({ err: reason }, 'check crashed');
-      result = { status: 'failed', reason };
+    const stop = new AbortController();
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => stop.abort());
+
+    while (!stop.signal.aborted) {
+      let result: CheckResult;
+      try {
+        result = await checkOnce(deps);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'unknown error';
+        log.error({ err: reason }, 'check crashed');
+        result = { status: 'failed', reason };
+      }
+      log.info(result, 'check finished');
+
+      if (once) {
+        process.exitCode = result.status === 'failed' ? 1 : 0;
+        return;
+      }
+
+      const next = nextRunAt(new Date(), Number(config.MONITOR_TIMEFRAME), config.MONITOR_DELAY_SECONDS);
+      log.info({ next: next.toISOString() }, 'waiting for the next candle');
+      try {
+        await sleep(next.getTime() - Date.now(), undefined, { signal: stop.signal });
+      } catch {
+        break; // stopped while waiting
+      }
     }
-    log.info(result, 'check finished');
-
-    if (once) {
-      process.exitCode = result.status === 'failed' ? 1 : 0;
-      return;
-    }
-
-    const next = nextRunAt(new Date(), Number(config.MONITOR_TIMEFRAME), config.MONITOR_DELAY_SECONDS);
-    log.info({ next: next.toISOString() }, 'waiting for the next candle');
-    try {
-      await sleep(next.getTime() - Date.now(), undefined, { signal: stop.signal });
-    } catch {
-      break; // stopped while waiting
-    }
+  } finally {
+    await db.close();
   }
 }
 
