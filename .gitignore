@@ -13,6 +13,8 @@ ngrok.yml
 # chart monitor: announced signals the database refused, waiting to be copied into it
 .monitor-pending.jsonl
 .monitor-pending.jsonl.tmp
+# local instructions for Claude Code
+CLAUDE.md
 # local backtest strategies, kept out of version control
 pine/backtest/
 .DS_Store
