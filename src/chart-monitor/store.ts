@@ -39,7 +39,7 @@ export class PgMonitorStore implements MonitorStore {
     private readonly db: Db,
     private readonly symbol: string,
     private readonly timeframe: string,
-  ) {}
+  ) { }
 
   async loadHealth(): Promise<MonitorHealth> {
     const { rows } = await this.db.query<MonitorHealth>(

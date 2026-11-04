@@ -52,6 +52,30 @@ async function findChartSocket({ host, port, timeoutMs = 10_000 }: CdpOptions): 
   return chart.webSocketDebuggerUrl;
 }
 
+/** Our only request on each connection, so its reply is the only message that matters. */
+const REQUEST_ID = 1;
+
+const evaluateRequest = (expression: string) =>
+  JSON.stringify({
+    id: REQUEST_ID,
+    method: 'Runtime.evaluate',
+    params: { expression, returnByValue: true, awaitPromise: true },
+  });
+
+/** What a DevTools message means for our request: nothing (another event), a failure, or the value. */
+function interpretMessage(data: unknown): { value: unknown } | CdpError | null {
+  let reply: z.infer<typeof replySchema>;
+  try {
+    reply = replySchema.parse(JSON.parse(String(data)));
+  } catch {
+    return null; // an event we did not ask for
+  }
+  if (reply.id !== REQUEST_ID) return null;
+  if (reply.error) return new CdpError(`DevTools error: ${reply.error.message}`);
+  if (reply.result?.exceptionDetails) return new CdpError('the page script threw');
+  return { value: reply.result?.result?.value };
+}
+
 /**
  * Evaluates a JavaScript expression in the TradingView chart tab over the Chrome DevTools
  * Protocol and returns its value. One short-lived connection per call keeps this robust against
@@ -64,11 +88,9 @@ export async function evaluateInChart(options: CdpOptions, expression: string): 
   return new Promise<unknown>((resolve, reject) => {
     const socket = new WebSocket(socketUrl);
     let settled = false;
-    const timer = setTimeout(
-      () => finish(new CdpError(`TradingView did not answer within ${timeoutMs} ms`)),
-      timeoutMs,
-    );
+    const timer = setTimeout(() => fail(`TradingView did not answer within ${timeoutMs} ms`), timeoutMs);
 
+    // Whichever of the reply, an error, a close or the timeout comes first decides the result.
     function finish(error?: Error, value?: unknown): void {
       if (settled) return;
       settled = true;
@@ -81,31 +103,16 @@ export async function evaluateInChart(options: CdpOptions, expression: string): 
       if (error) reject(error);
       else resolve(value);
     }
+    const fail = (message: string) => finish(new CdpError(message));
 
-    socket.addEventListener('open', () => {
-      socket.send(
-        JSON.stringify({
-          id: 1,
-          method: 'Runtime.evaluate',
-          params: { expression, returnByValue: true, awaitPromise: true },
-        }),
-      );
-    });
+    socket.addEventListener('open', () => socket.send(evaluateRequest(expression)));
     socket.addEventListener('message', (event) => {
-      let reply: z.infer<typeof replySchema>;
-      try {
-        reply = replySchema.parse(JSON.parse(String(event.data)));
-      } catch {
-        return; // an event we did not ask for
-      }
-      if (reply.id !== 1) return;
-      if (reply.error) return finish(new CdpError(`DevTools error: ${reply.error.message}`));
-      if (reply.result?.exceptionDetails) return finish(new CdpError('the page script threw'));
-      finish(undefined, reply.result?.result?.value);
+      const outcome = interpretMessage(event.data);
+      if (outcome === null) return;
+      if (outcome instanceof CdpError) finish(outcome);
+      else finish(undefined, outcome.value);
     });
-    socket.addEventListener('error', () => finish(new CdpError('could not talk to TradingView')));
-    socket.addEventListener('close', () =>
-      finish(new CdpError('TradingView closed the connection before answering')),
-    );
+    socket.addEventListener('error', () => fail('could not talk to TradingView'));
+    socket.addEventListener('close', () => fail('TradingView closed the connection before answering'));
   });
 }
