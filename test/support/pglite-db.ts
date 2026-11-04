@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import type { Db, QueryResult } from '../src/db.js';
+import type { Db, QueryResult } from '../../src/shared/db.js';
 
 interface Runner {
   query(text: string, params?: unknown[]): Promise<{ rows: unknown[]; affectedRows?: number }>;

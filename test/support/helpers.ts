@@ -1,10 +1,12 @@
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify';
-import { loadConfig, type Config } from '../src/config.js';
-import { NotifyError, type Notifier } from '../src/discord.js';
-import { migrate } from '../src/migrations.js';
-import { SignalProcessor } from '../src/processor.js';
-import { buildServer } from '../src/server.js';
-import { SignalStore } from '../src/store.js';
+import { loadConfig, type Config } from '../../src/shared/config.js';
+import { NotifyError, type Notifier } from '../../src/shared/discord.js';
+import { migrate } from '../../src/migrations.js';
+import { SignalProcessor } from '../../src/alerts/processor.js';
+import { buildServer } from '../../src/server.js';
+import { SignalStore } from '../../src/alerts/store.js';
+import { BarStore } from '../../src/forward-test/bars.js';
+import { RejectionLog } from '../../src/shared/rejections.js';
 import { PgliteDb } from './pglite-db.js';
 
 export const TOKEN = 'test-token-0123456789abcdef';
@@ -79,6 +81,8 @@ export async function createHarness() {
   const db = await PgliteDb.create();
   await migrate(db);
   const store = new SignalStore(db);
+  const barStore = new BarStore(db);
+  const rejections = new RejectionLog(db);
   const notifier = new FakeNotifier();
   const apps: FastifyInstance[] = [];
 
@@ -93,7 +97,7 @@ export async function createHarness() {
       backoffMs: 0,
       sleep: async () => {},
     });
-    const app = await buildServer({ config, store, processor });
+    const app = await buildServer({ config, store, processor, rejections, barStore });
     apps.push(app);
     return {
       app,
@@ -113,11 +117,12 @@ export async function createHarness() {
   return {
     db,
     store,
+    barStore,
     notifier,
     build,
     async reset() {
       await db.exec(
-        'TRUNCATE alert_deliveries, webhook_rejections, signals RESTART IDENTITY CASCADE',
+        'TRUNCATE alert_deliveries, webhook_rejections, signals, bars RESTART IDENTITY CASCADE',
       );
       notifier.reset();
     },

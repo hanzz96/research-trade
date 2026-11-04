@@ -4,12 +4,13 @@
 // values the backend needs through hidden plots, so the alert message can reference them with
 // {{plot("...")}} placeholders. No secrets live in this script: paste the webhook token into the
 // alert message in TradingView's alert dialog.
-indicator("XAUUSD Entry Reminder", shorttitle = "XAU Entry", overlay = true)
+indicator("XAUUSD Entry Reminder", shorttitle = "XAU Entry", overlay = true, max_lines_count = 150, max_labels_count = 100)
 
 GRP_TREND    = "Trend"
 GRP_MOMENTUM = "Momentum"
 GRP_LEVELS   = "Levels"
 GRP_FILTER   = "Filters"
+GRP_PLAN     = "Entry helper"
 
 // ── Inputs ────────────────────────────────────────────────────────────────────
 emaFastLen    = input.int(9, "EMA fast", minval = 1, group = GRP_TREND)
@@ -25,10 +26,16 @@ macdMode      = input.string("Line vs signal", "MACD confirmation", options = ["
 
 atrLen        = input.int(14, "ATR length", minval = 1, group = GRP_LEVELS)
 swingLen      = input.int(10, "Swing lookback (bars)", minval = 2, group = GRP_LEVELS)
+atrBufferMult = input.float(0.5, "Stop: ATR buffer beyond the swing", minval = 0.0, step = 0.1, group = GRP_LEVELS)
+rr            = input.float(1.5, "Target (R multiple)", minval = 0.5, step = 0.5, group = GRP_LEVELS)
 
 useHtf        = input.bool(true, "Use higher-timeframe trend filter", group = GRP_FILTER)
 htfTf         = input.timeframe("60", "Higher timeframe", group = GRP_FILTER)
 cooldownBars  = input.int(4, "Cooldown after a signal (bars)", minval = 0, group = GRP_FILTER)
+
+showPlan      = input.bool(true, "Draw entry, stop and target on a signal", group = GRP_PLAN)
+qtyOz         = input.float(1.0, "Size in oz for the risk label (0.01 lot = 1 oz)", minval = 0.01, group = GRP_PLAN)
+riskBudgetUsd = input.float(2.5, "Risk budget per trade (USD, warning only)", minval = 0.01, step = 0.25, group = GRP_PLAN)
 
 // ── Indicators ────────────────────────────────────────────────────────────────
 emaFast = ta.ema(close, emaFastLen)
@@ -69,6 +76,55 @@ sellSignal = barstate.isconfirmed and sellState and not sellState[1] and cooldow
 if buySignal or sellSignal
     lastSignalBar := bar_index
 
+// ── Entry helper: indicative stop and target (swing +/- ATR buffer, R multiple) ─────
+// Measured from the signal candle's close. Information only: the alert still fires without it.
+longStop    = swingLow - atrBufferMult * atr
+shortStop   = swingHigh + atrBufferMult * atr
+longTarget  = close + rr * (close - longStop)
+shortTarget = close - rr * (shortStop - close)
+
+var int planDir = 0
+var int planBar = na
+var float planStop = na
+var float planTarget = na
+var line entryLine = na
+var line stopLine = na
+var line targetLine = na
+var label stopLabel = na
+var label targetLabel = na
+
+if showPlan and (buySignal or sellSignal)
+    planDir    := buySignal ? 1 : -1
+    planBar    := bar_index
+    planStop   := buySignal ? longStop : shortStop
+    planTarget := buySignal ? longTarget : shortTarget
+    riskUsd = math.abs(close - planStop) * qtyOz
+    overBudget = riskUsd > riskBudgetUsd
+    entryLine  := line.new(bar_index, close, bar_index + 1, close, color = color.new(color.gray, 0), style = line.style_dotted)
+    stopLine   := line.new(bar_index, planStop, bar_index + 1, planStop, color = color.red, style = line.style_dashed)
+    targetLine := line.new(bar_index, planTarget, bar_index + 1, planTarget, color = color.green, style = line.style_dashed)
+    rewardUsd = math.abs(planTarget - close) * qtyOz
+    // One small label per level, sitting on its own line: red for the stop, green for the target.
+    stopLabel   := label.new(bar_index, planStop, "SL " + str.tostring(planStop, "#") + "  -$" + str.tostring(riskUsd, "#.#")
+         + (overBudget ? " (over budget)" : ""),
+         style = label.style_label_left, color = color.new(color.red, 25), textcolor = color.white, size = size.tiny)
+    targetLabel := label.new(bar_index, planTarget, "TP " + str.tostring(planTarget, "#") + "  +$" + str.tostring(rewardUsd, "#.#"),
+         style = label.style_label_left, color = color.new(color.green, 25), textcolor = color.white, size = size.tiny)
+else if planDir != 0 and bar_index > planBar
+    // Keep the levels extending until price touches one of them. If both are touched in the
+    // same candle the stop is assumed to hit first (the cautious reading).
+    stopHit   = planDir == 1 ? low <= planStop : high >= planStop
+    targetHit = planDir == 1 ? high >= planTarget : low <= planTarget
+    line.set_x2(entryLine, bar_index)
+    line.set_x2(stopLine, bar_index)
+    line.set_x2(targetLine, bar_index)
+    if stopHit or targetHit
+        if stopHit
+            label.set_text(stopLabel, label.get_text(stopLabel) + "  > HIT")
+        else
+            label.set_text(targetLabel, label.get_text(targetLabel) + "  > HIT")
+        planDir := 0
+
 // ── Plots ─────────────────────────────────────────────────────────────────────
 plot(emaFast, "EMA Fast", color = color.new(color.yellow, 0))
 plot(emaSlow, "EMA Slow", color = color.new(color.blue, 0))
@@ -81,6 +137,10 @@ plot(atr, "ATR", display = display.data_window)
 plot(swingLow, "Swing Low", display = display.data_window)
 plot(swingHigh, "Swing High", display = display.data_window)
 plot(htfTrend, "HTF Trend", display = display.data_window)
+plot(longStop, "BUY Stop", display = display.data_window)
+plot(longTarget, "BUY Target", display = display.data_window)
+plot(shortStop, "SELL Stop", display = display.data_window)
+plot(shortTarget, "SELL Target", display = display.data_window)
 
 plotshape(buySignal, "BUY candidate", shape.triangleup, location.belowbar, color.green, size = size.small, text = "BUY")
 plotshape(sellSignal, "SELL candidate", shape.triangledown, location.abovebar, color.red, size = size.small, text = "SELL")
@@ -89,7 +149,7 @@ plotshape(sellSignal, "SELL candidate", shape.triangledown, location.abovebar, c
 // Create one alert per condition with "Once Per Bar Close", Webhook URL set, and replace
 // PASTE_WEBHOOK_TOKEN_HERE in the message with the value of WEBHOOK_TOKEN from the backend .env.
 alertcondition(buySignal, "BUY candidate",
-  '{"version":"1.1","token":"PASTE_WEBHOOK_TOKEN_HERE","symbol":"{{ticker}}","timeframe":"{{interval}}","timestamp":"{{time}}","direction":"BUY","price":{{close}},"indicators":{"ema_fast":{{plot("EMA Fast")}},"ema_slow":{{plot("EMA Slow")}},"rsi":{{plot("RSI")}},"macd":{{plot("MACD")}},"macd_signal":{{plot("MACD Signal")}},"macd_histogram":{{plot("MACD Histogram")}},"atr":{{plot("ATR")}}},"levels":{"swing_low":{{plot("Swing Low")}},"swing_high":{{plot("Swing High")}}},"htf":{"trend":{{plot("HTF Trend")}}}}')
+  '{"version":"1.1","token":"PASTE_WEBHOOK_TOKEN_HERE","symbol":"{{ticker}}","timeframe":"{{interval}}","timestamp":"{{time}}","direction":"BUY","price":{{close}},"indicators":{"ema_fast":{{plot("EMA Fast")}},"ema_slow":{{plot("EMA Slow")}},"rsi":{{plot("RSI")}},"macd":{{plot("MACD")}},"macd_signal":{{plot("MACD Signal")}},"macd_histogram":{{plot("MACD Histogram")}},"atr":{{plot("ATR")}}},"levels":{"swing_low":{{plot("Swing Low")}},"swing_high":{{plot("Swing High")}}},"htf":{"trend":{{plot("HTF Trend")}}},"plan":{"stop":{{plot("BUY Stop")}},"target":{{plot("BUY Target")}}}}')
 
 alertcondition(sellSignal, "SELL candidate",
-  '{"version":"1.1","token":"PASTE_WEBHOOK_TOKEN_HERE","symbol":"{{ticker}}","timeframe":"{{interval}}","timestamp":"{{time}}","direction":"SELL","price":{{close}},"indicators":{"ema_fast":{{plot("EMA Fast")}},"ema_slow":{{plot("EMA Slow")}},"rsi":{{plot("RSI")}},"macd":{{plot("MACD")}},"macd_signal":{{plot("MACD Signal")}},"macd_histogram":{{plot("MACD Histogram")}},"atr":{{plot("ATR")}}},"levels":{"swing_low":{{plot("Swing Low")}},"swing_high":{{plot("Swing High")}}},"htf":{"trend":{{plot("HTF Trend")}}}}')
+  '{"version":"1.1","token":"PASTE_WEBHOOK_TOKEN_HERE","symbol":"{{ticker}}","timeframe":"{{interval}}","timestamp":"{{time}}","direction":"SELL","price":{{close}},"indicators":{"ema_fast":{{plot("EMA Fast")}},"ema_slow":{{plot("EMA Slow")}},"rsi":{{plot("RSI")}},"macd":{{plot("MACD")}},"macd_signal":{{plot("MACD Signal")}},"macd_histogram":{{plot("MACD Histogram")}},"atr":{{plot("ATR")}}},"levels":{"swing_low":{{plot("Swing Low")}},"swing_high":{{plot("Swing High")}}},"htf":{"trend":{{plot("HTF Trend")}}},"plan":{"stop":{{plot("SELL Stop")}},"target":{{plot("SELL Target")}}}}')

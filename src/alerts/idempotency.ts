@@ -1,3 +1,5 @@
+import { toIsoString } from '../shared/time.js';
+
 export interface IdempotencyInput {
   symbol: string;
   timeframe: string;
@@ -13,7 +15,7 @@ export function buildIdempotencyKey(input: IdempotencyInput): string {
   return [
     input.symbol.toUpperCase(),
     input.timeframe,
-    new Date(input.timestamp).toISOString(),
+    toIsoString(input.timestamp),
     input.direction,
   ].join('|');
 }

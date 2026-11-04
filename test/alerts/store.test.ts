@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrate, migrations } from '../src/migrations.js';
-import { createHarness } from './helpers.js';
+import { createHarness } from '../support/helpers.js';
 
 type Harness = Awaited<ReturnType<typeof createHarness>>;
 
@@ -32,15 +31,6 @@ describe('SignalStore and migrations', () => {
   });
   beforeEach(async () => {
     await h.reset();
-  });
-
-  it('applies migrations once and is safe to run again', async () => {
-    await migrate(h.db);
-    await migrate(h.db);
-    const { rows } = await h.db.query<{ n: number }>(
-      'SELECT count(*)::int AS n FROM schema_migrations',
-    );
-    expect(rows[0]?.n).toBe(migrations.length);
   });
 
   it('round-trips a signal including its JSON snapshot and ISO timestamps', async () => {

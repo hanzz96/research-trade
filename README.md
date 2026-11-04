@@ -63,9 +63,33 @@ curl -sS -X POST http://127.0.0.1:3000/webhook/tradingview \
 A Discord message should appear. Sending the same command again returns `"status":"duplicate"` and
 sends nothing.
 
+### Try the webhooks with the CLI
+
+`src/webhook-cli/` is a small [commander](https://github.com/tj/commander.js) CLI that sends valid
+requests for you, with tokens and URLs read from `.env` (they are never printed, and never shown as
+option defaults). Start the server first (`npm run dev`).
+
+```bash
+npm run webhook -- signal                       # BUY signal to /webhook/tradingview
+npm run webhook -- signal --direction SELL --twice   # same SELL twice: the 2nd answers "duplicate"
+npm run webhook -- signal --timeframe 30 --no-plan   # other timeframe, without the SL/TP plan
+npm run webhook -- bars --count 4               # 4 closed M15 candles to /ingest/bars
+npm run webhook -- discord                      # message straight to the Discord webhook
+npm run webhook -- health                       # GET /health
+npm run webhook -- signal --help                # every option
+```
+
+A failed call prints the HTTP status and body, a hint for the usual causes (wrong token, route
+missing, rate limit, a rejected request) and exits with code 1. Two things write real data:
+
+- `signal` goes through the real pipeline, so a valid signal does post to Discord.
+- `bars` stores **synthetic candles** (source `webhook-cli`) in the `bars` table. `/health` then shows
+  them as the latest candle, and a strategy that reads `bars` without filtering by source would use
+  them. Remove them afterwards by deleting the rows whose source is `webhook-cli`.
+
 ## TradingView
 
-1. Add `pine/xauusd_entry_reminder.pine` to your chart (Pine Editor → paste → Save → Add to chart)
+1. Add `pine/alerts/xauusd_entry_reminder.pine` to your chart (Pine Editor → paste → Save → Add to chart)
    on `OANDA:XAUUSD`, timeframe **M15**. The higher-timeframe filter (H1) only applies when the
    chart is below the higher timeframe.
 2. Create **two alerts** (one per condition): *Condition* = this indicator → `BUY candidate`, then
@@ -83,6 +107,14 @@ sends nothing.
 | MACD 12/26/9 | line > signal | line < signal |
 | H1 EMA trend | bullish (last closed H1 bar) | bearish |
 
+**Entry helper.** On each signal the indicator draws the entry (grey dotted), stop (red dashed) and
+target (green dashed) lines until price touches one. Each level has its own label: a red `SL` label with
+the USD risk at the chosen size (default 1 oz = 0.01 lot; flagged when it exceeds the risk budget input)
+and a green `TP` label with the USD reward. The label of the level that was touched gets `> HIT`.
+Stop = swing low/high of the last 10 candles +/- 0.5 x ATR, target = 1.5 x the stop distance. The
+same levels go into the alert as `plan.stop` / `plan.target` (optional in the payload) and appear in
+the Discord message. If you created alerts earlier, recreate them to pick up the new message.
+
 An alert fires only on the **first confirmed candle** where all conditions become true, then stays
 quiet for a cooldown (4 bars). Without this, a trend would alert on every candle. These parameters
 are research defaults, not validated trading advice.
@@ -98,6 +130,81 @@ are research defaults, not validated trading advice.
 - On restart, unfinished signals are re-sent. Delivery is therefore at-least-once: a crash between
   the Discord call and the status update can repeat one message, but never drops a signal.
 - If `DISCORD_WEBHOOK_URL` is empty, signals are still stored and marked `FAILED` with a clear reason.
+
+## Forward test data (MT5 → database)
+
+A second feature collects real broker candles (with the real spread) so strategies can be paper
+traded and backtested on FBS data instead of TradingView's. Stage 1, the backend, is ready:
+
+- `POST /ingest/bars` takes up to 500 **closed** candles per call, authenticated with the
+  `X-Ingest-Token` header (`INGEST_TOKEN` in `.env`; the endpoint is disabled when it is empty).
+  Candles are idempotent per source, symbol, timeframe and open time, so re-sending is safe.
+- `GET /health` shows the latest candle and the candle count per timeframe.
+
+```bash
+set -a; . ./.env; set +a
+curl -sS -X POST http://127.0.0.1:3000/ingest/bars \
+  -H 'content-type: application/json' -H "x-ingest-token: $INGEST_TOKEN" \
+  -d '{"source":"mt5-fbs","symbol":"XAUUSD","timeframe":"15","bars":[
+        {"time":"2026-11-03T08:30:00Z","open":3900,"high":3903.5,"low":3898.2,"close":3902.1,
+         "tick_volume":812,"spread_min":0.2,"spread_avg":0.31,"spread_max":0.9}]}'
+```
+
+`time` is the candle open time in UTC and spreads are in price units (USD for XAUUSD).
+Next stages: the MT5 Expert Advisor that sends candles (`mt5/`), a CSV import for history, then
+the strategy engine and paper-trade tracker. See [docs/PLAN.md](docs/PLAN.md).
+
+## Chart monitor (TradingView → Discord without webhook alerts)
+
+TradingView only sends webhooks on a paid plan. As an alternative, `src/chart-monitor/` is a small
+separate process that reads the signals the indicator draws on the **TradingView Desktop** chart and
+posts new ones to Discord. It needs no web server; it uses `DISCORD_WEBHOOK_URL` and `DATABASE_URL`
+from `.env` (the PostgreSQL database must be up; its tables are created on start).
+
+1. Start TradingView Desktop with the debug port, for example
+   `/Applications/TradingView.app/Contents/MacOS/TradingView --remote-debugging-port=9222`.
+2. Keep one chart on `XAUUSD`, **M30**, with the *XAUUSD Entry Reminder* indicator and its
+   "Draw entry, stop and target on a signal" input on (the monitor reads those drawings).
+3. Run `npm run monitor`. It checks one minute after every M30 candle close (`:01` and `:31`) and
+   keeps running until stopped. `npm run monitor:once` does a single check and exits (exit code 1 on
+   failure), for cron or launchd.
+
+How it behaves:
+
+- The first successful read only records the signals already on the chart; nothing old is announced.
+- A signal is remembered only after its Discord message was delivered, so a failed send is retried
+  at the next check. Memory lives in PostgreSQL: `chart_signals` (every signal seen, with entry, SL,
+  TP, whether it was only part of the first read or announced, and when) and `chart_monitor_state`
+  (first read done, recent failures). The table doubles as a log of announced signals, useful for
+  the forward test later.
+- If the Discord message went out but PostgreSQL refused the record, the signal is written to
+  `.monitor-pending.jsonl` (git-ignored; the file exists only while something is waiting). Every
+  check reads that file as well as the database: its signals count as already announced, so they
+  are never sent twice, and they are copied into the database, together with any new signals, as
+  soon as the database accepts them. Entries keep the time the message was sent as `created_at`.
+- If the chart cannot be read twice in a row (TradingView closed, other symbol or timeframe, indicator
+  removed) it posts one notice to Discord, and one more when it recovers.
+- It reads TradingView's internal chart model, so a TradingView update can break it; the tests cover
+  the logic but not that part, so check it after updating TradingView.
+- It only works while TradingView Desktop and the Mac are on. It is a convenience, not a guarantee;
+  for something durable use the webhook pipeline above.
+- Do not run it together with another watcher on the same Discord channel, or every signal is posted twice.
+
+## Project structure
+
+One folder per feature; shared code in `shared/`. Conventions are in [CLAUDE.md](CLAUDE.md).
+
+```
+src/alerts/        TradingView webhook -> Discord
+src/forward-test/  MT5 candles -> Postgres -> paper trading
+src/chart-monitor/ TradingView Desktop chart -> Discord (own process, own entry: main.ts)
+src/webhook-cli/   commander CLI to try the webhooks by hand (npm run webhook)
+src/shared/        config, db, auth, migration runner, rejection log, Discord notifier, display helpers
+src/server.ts      HTTP app wiring        src/migrations.ts  all migrations, one history
+test/              mirrors src/ (alerts/, forward-test/, chart-monitor/, webhook-cli/, shared/) + support/ harness
+pine/alerts/       indicators for TradingView alerts (committed)
+pine/backtest/     local backtest strategies (git-ignored)
+```
 
 ## Development
 

@@ -1,3 +1,4 @@
+import moment from 'moment-timezone';
 import { z } from 'zod';
 
 const emptyToUndefined = (value: unknown) => (value === '' ? undefined : value);
@@ -13,17 +14,10 @@ const csv = (fallback: string) =>
         .filter(Boolean),
     );
 
-const timezone = z
+export const timezone = z
   .string()
   .default('Asia/Jakarta')
-  .refine((tz) => {
-    try {
-      new Intl.DateTimeFormat('en', { timeZone: tz });
-      return true;
-    } catch {
-      return false;
-    }
-  }, 'must be a valid IANA time zone');
+  .refine((tz) => moment.tz.zone(tz) !== null, 'must be a valid IANA time zone');
 
 const envSchema = z.object({
   HOST: z.string().default('127.0.0.1'),
@@ -39,6 +33,12 @@ const envSchema = z.object({
   ALLOWED_IPS: csv(''),
   ALLOWED_SYMBOLS: csv('XAUUSD').transform((items) => items.map((item) => item.toUpperCase())),
   ALLOWED_TIMEFRAMES: csv('15'),
+  // Bar ingestion (forward test data from the MT5 Expert Advisor). Disabled when no token is set.
+  INGEST_TOKEN: z.preprocess(
+    emptyToUndefined,
+    z.string().min(16, 'must be at least 16 characters').optional(),
+  ),
+  BAR_TIMEFRAMES: csv('5,15,60'),
   MAX_SIGNAL_AGE_MINUTES: z.coerce.number().positive().default(60),
   DISPLAY_TIMEZONE: timezone,
   DISCORD_WEBHOOK_URL: z.preprocess(
