@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node --env-file-if-exists=.env dist/index.js",
     "monitor": "tsx --env-file-if-exists=.env src/chart-monitor/main.ts",
+    "monitor:pretty": "tsx --env-file-if-exists=.env src/chart-monitor/main.ts | pino-pretty --translateTime 'SYS:yyyy-mm-dd HH:MM:ss' --ignore pid,hostname",
     "monitor:once": "tsx --env-file-if-exists=.env src/chart-monitor/main.ts --once",
     "webhook": "tsx --env-file-if-exists=.env src/webhook-cli/main.ts",
     "typecheck": "tsc --noEmit",
@@ -31,6 +32,7 @@
     "@electric-sql/pglite": "^0.5.14",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
+    "pino-pretty": "^13.2.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"

@@ -167,7 +167,9 @@ from `.env` (the PostgreSQL database must be up; its tables are created on start
    "Draw entry, stop and target on a signal" input on (the monitor reads those drawings).
 3. Run `npm run monitor`. It checks one minute after every M30 candle close (`:01` and `:31`) and
    keeps running until stopped. `npm run monitor:once` does a single check and exits (exit code 1 on
-   failure), for cron or launchd.
+   failure), for cron or launchd. `npm run monitor:pretty` is the same loop with the JSON logs made
+   readable (local time, one field per line), handy in a terminal; use `monitor` where the logs are
+   read by a machine.
 
 How it behaves:
 

@@ -4,7 +4,6 @@ import { pino, type Logger } from 'pino';
 import { migrate } from '../migrations.js';
 import { PgDb, type Db } from '../shared/db.js';
 import { DiscordNotifier } from '../shared/discord.js';
-import { toIsoString } from '../shared/time.js';
 import { evaluateInChart } from './cdp.js';
 import { readChart } from './chart-reader.js';
 import { loadMonitorConfig, type MonitorConfig } from './config.js';
@@ -49,7 +48,7 @@ async function runCheck(deps: MonitorDeps): Promise<CheckResult> {
 /** Waits until shortly after the next candle closes. False if the process was told to stop meanwhile. */
 async function waitForNextCandle(config: MonitorConfig, log: Logger, stop: AbortSignal): Promise<boolean> {
   const next = nextRunAt(moment(), Number(config.MONITOR_TIMEFRAME), config.MONITOR_DELAY_SECONDS);
-  log.info({ next: toIsoString(next) }, 'waiting for the next candle');
+  log.info({ next: moment.tz(next, config.DISPLAY_TIMEZONE).format('YYYY-MM-DD HH:mm:ss z') }, 'waiting for the next candle');
   try {
     await sleep(next.getTime() - Date.now(), undefined, { signal: stop });
     return true;
