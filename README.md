@@ -63,6 +63,30 @@ curl -sS -X POST http://127.0.0.1:3000/webhook/tradingview \
 A Discord message should appear. Sending the same command again returns `"status":"duplicate"` and
 sends nothing.
 
+### Try the webhooks with the CLI
+
+`src/webhook-cli/` is a small [commander](https://github.com/tj/commander.js) CLI that sends valid
+requests for you, with tokens and URLs read from `.env` (they are never printed, and never shown as
+option defaults). Start the server first (`npm run dev`).
+
+```bash
+npm run webhook -- signal                       # BUY signal to /webhook/tradingview
+npm run webhook -- signal --direction SELL --twice   # same SELL twice: the 2nd answers "duplicate"
+npm run webhook -- signal --timeframe 30 --no-plan   # other timeframe, without the SL/TP plan
+npm run webhook -- bars --count 4               # 4 closed M15 candles to /ingest/bars
+npm run webhook -- discord                      # message straight to the Discord webhook
+npm run webhook -- health                       # GET /health
+npm run webhook -- signal --help                # every option
+```
+
+A failed call prints the HTTP status and body, a hint for the usual causes (wrong token, route
+missing, rate limit, a rejected request) and exits with code 1. Two things write real data:
+
+- `signal` goes through the real pipeline, so a valid signal does post to Discord.
+- `bars` stores **synthetic candles** (source `webhook-cli`) in the `bars` table. `/health` then shows
+  them as the latest candle, and a strategy that reads `bars` without filtering by source would use
+  them. Remove them afterwards by deleting the rows whose source is `webhook-cli`.
+
 ## TradingView
 
 1. Add `pine/alerts/xauusd_entry_reminder.pine` to your chart (Pine Editor → paste → Save → Add to chart)
@@ -174,9 +198,10 @@ One folder per feature; shared code in `shared/`. Conventions are in [CLAUDE.md]
 src/alerts/        TradingView webhook -> Discord
 src/forward-test/  MT5 candles -> Postgres -> paper trading
 src/chart-monitor/ TradingView Desktop chart -> Discord (own process, own entry: main.ts)
+src/webhook-cli/   commander CLI to try the webhooks by hand (npm run webhook)
 src/shared/        config, db, auth, migration runner, rejection log, Discord notifier, display helpers
 src/server.ts      HTTP app wiring        src/migrations.ts  all migrations, one history
-test/              mirrors src/ (alerts/, forward-test/, chart-monitor/, shared/) + support/ harness
+test/              mirrors src/ (alerts/, forward-test/, chart-monitor/, webhook-cli/, shared/) + support/ harness
 pine/alerts/       indicators for TradingView alerts (committed)
 pine/backtest/     local backtest strategies (git-ignored)
 ```
