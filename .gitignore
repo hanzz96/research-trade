@@ -10,6 +10,9 @@ data/
 !.env.example
 # ngrok config holds the account authtoken
 ngrok.yml
+# chart monitor: announced signals the database refused, waiting to be copied into it
+.monitor-pending.jsonl
+.monitor-pending.jsonl.tmp
 # local backtest strategies, kept out of version control
 pine/backtest/
 .DS_Store

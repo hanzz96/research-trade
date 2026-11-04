@@ -6,6 +6,7 @@ import { DiscordNotifier } from '../shared/discord.js';
 import { evaluateInChart } from './cdp.js';
 import { readChart } from './chart-reader.js';
 import { loadMonitorConfig } from './config.js';
+import { FilePendingLog } from './fallback.js';
 import { checkOnce, type CheckResult } from './monitor.js';
 import { nextRunAt } from './schedule.js';
 import { PgMonitorStore } from './store.js';
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
       log,
       notifier: new DiscordNotifier(config.DISCORD_WEBHOOK_URL),
       store: new PgMonitorStore(db, config.MONITOR_SYMBOL, config.MONITOR_TIMEFRAME),
+      fallback: new FilePendingLog(config.MONITOR_FALLBACK_FILE),
       readChart: () =>
         readChart(
           (expression) => evaluateInChart({ host: config.CDP_HOST, port: config.CDP_PORT }, expression),
@@ -40,6 +42,7 @@ async function main(): Promise<void> {
     for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => stop.abort());
 
     while (!stop.signal.aborted) {
+      console.log("Running..")
       let result: CheckResult;
       try {
         result = await checkOnce(deps);

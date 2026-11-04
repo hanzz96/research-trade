@@ -23,6 +23,9 @@ const envSchema = z.object({
     .refine((value) => 60 % Number(value) === 0, 'must divide 60 (for example 15, 30 or 60)')
     .default('30'),
   MONITOR_STUDY: z.string().min(1).default('XAUUSD Entry Reminder'),
+  // Signals whose Discord message went out but whose database record failed wait in this file
+  // until the next check copies them into PostgreSQL. The file only exists while that is the case.
+  MONITOR_FALLBACK_FILE: z.string().min(1).default('.monitor-pending.jsonl'),
   // Seconds to wait after a candle closes before reading the chart.
   MONITOR_DELAY_SECONDS: z.coerce.number().int().min(5).max(600).default(60),
   DISPLAY_TIMEZONE: timezone,

@@ -10,6 +10,12 @@ export interface MonitorHealth {
   alerted: boolean;
 }
 
+/** A signal whose Discord message was delivered, and when. */
+export interface AnnouncedSignal {
+  signal: ChartSignal;
+  announcedAt: Date;
+}
+
 /** What the monitor remembers between checks. */
 export interface MonitorStore {
   loadHealth(): Promise<MonitorHealth>;
@@ -18,14 +24,14 @@ export interface MonitorStore {
   seenKeys(): Promise<Set<string>>;
   /** First successful read: remembers what is on the chart without announcing it. */
   recordBaseline(signals: readonly ChartSignal[]): Promise<void>;
-  /** Remembers a signal whose Discord message was delivered. */
-  recordAnnounced(signal: ChartSignal): Promise<void>;
+  /** Remembers signals whose Discord message was delivered, all or nothing. Repeats are ignored. */
+  recordAnnounced(entries: readonly AnnouncedSignal[]): Promise<void>;
 }
 
 const INSERT_SIGNAL = `
   INSERT INTO chart_signals
-    (symbol, timeframe, signal_key, direction, entry, stop, target, hit, source)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    (symbol, timeframe, signal_key, direction, entry, stop, target, hit, source, created_at)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10::timestamptz, now()))
   ON CONFLICT (symbol, timeframe, signal_key) DO NOTHING`;
 
 export class PgMonitorStore implements MonitorStore {
@@ -65,7 +71,7 @@ export class PgMonitorStore implements MonitorStore {
   async recordBaseline(signals: readonly ChartSignal[]): Promise<void> {
     // One transaction: either the monitor is baselined with everything remembered, or not at all.
     await this.db.transaction(async (tx) => {
-      for (const signal of signals) await this.insert(tx, signal, 'baseline');
+      for (const signal of signals) await this.insert(tx, signal, 'baseline', null);
       await tx.query(
         `INSERT INTO chart_monitor_state (symbol, timeframe, baselined)
          VALUES ($1, $2, true)
@@ -75,11 +81,20 @@ export class PgMonitorStore implements MonitorStore {
     });
   }
 
-  async recordAnnounced(signal: ChartSignal): Promise<void> {
-    await this.insert(this.db, signal, 'announced');
+  async recordAnnounced(entries: readonly AnnouncedSignal[]): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      for (const { signal, announcedAt } of entries) {
+        await this.insert(tx, signal, 'announced', announcedAt);
+      }
+    });
   }
 
-  private async insert(db: Db, signal: ChartSignal, source: 'baseline' | 'announced'): Promise<void> {
+  private async insert(
+    db: Db,
+    signal: ChartSignal,
+    source: 'baseline' | 'announced',
+    createdAt: Date | null,
+  ): Promise<void> {
     await db.query(INSERT_SIGNAL, [
       this.symbol,
       this.timeframe,
@@ -90,6 +105,7 @@ export class PgMonitorStore implements MonitorStore {
       signal.target,
       signal.hit,
       source,
+      createdAt,
     ]);
   }
 }

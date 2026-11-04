@@ -153,6 +153,11 @@ How it behaves:
   TP, whether it was only part of the first read or announced, and when) and `chart_monitor_state`
   (first read done, recent failures). The table doubles as a log of announced signals, useful for
   the forward test later.
+- If the Discord message went out but PostgreSQL refused the record, the signal is written to
+  `.monitor-pending.jsonl` (git-ignored; the file exists only while something is waiting). Every
+  check reads that file as well as the database: its signals count as already announced, so they
+  are never sent twice, and they are copied into the database, together with any new signals, as
+  soon as the database accepts them. Entries keep the time the message was sent as `created_at`.
 - If the chart cannot be read twice in a row (TradingView closed, other symbol or timeframe, indicator
   removed) it posts one notice to Discord, and one more when it recovers.
 - It reads TradingView's internal chart model, so a TradingView update can break it; the tests cover

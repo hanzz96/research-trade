@@ -15,6 +15,7 @@ describe('loadMonitorConfig', () => {
       MONITOR_SYMBOL: 'XAUUSD',
       MONITOR_TIMEFRAME: '30',
       MONITOR_STUDY: 'XAUUSD Entry Reminder',
+      MONITOR_FALLBACK_FILE: '.monitor-pending.jsonl',
       MONITOR_DELAY_SECONDS: 60,
       DISPLAY_TIMEZONE: 'Asia/Jakarta',
     });

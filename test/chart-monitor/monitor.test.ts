@@ -5,9 +5,11 @@ import {
   BUY_A,
   BUY_B,
   FakeNotifier,
+  FakePendingLog,
   MemoryStore,
   SELL_C,
   combine,
+  drawSignal,
   monitorConfig,
   silentLog,
   snapshotOf,
@@ -16,6 +18,7 @@ import {
 describe('checkOnce', () => {
   let notifier: FakeNotifier;
   let store: MemoryStore;
+  let fallback: FakePendingLog;
   let chart: ChartSnapshot | Error;
 
   const check = () =>
@@ -23,6 +26,7 @@ describe('checkOnce', () => {
       config: monitorConfig,
       notifier,
       store,
+      fallback,
       log: silentLog,
       now: () => new Date('2026-11-04T09:01:00Z'),
       readChart: async () => {
@@ -34,6 +38,7 @@ describe('checkOnce', () => {
   beforeEach(() => {
     notifier = new FakeNotifier();
     store = new MemoryStore();
+    fallback = new FakePendingLog();
     chart = snapshotOf(combine(SELL_C, BUY_A));
   });
 
@@ -159,6 +164,87 @@ describe('checkOnce', () => {
       chart = snapshotOf(combine(SELL_C, BUY_A));
       expect(await check()).toEqual({ status: 'baseline', signals: 2 });
       expect(notifier.sent).toEqual([]);
+    });
+  });
+
+  describe('when the database refuses a record after the message went out', () => {
+    const keyB = 'BUY|3913.52|4009.56';
+    const SELL_D = drawSignal({ x: 102, entry: 3940, stop: 3980, target: 3880 });
+    const keyD = 'SELL|3980.00|3880.00';
+
+    beforeEach(async () => {
+      chart = snapshotOf(combine(SELL_C, BUY_A));
+      await check(); // baseline
+      chart = snapshotOf(combine(SELL_C, BUY_A, BUY_B));
+      store.failRecord = true;
+    });
+
+    it('keeps the signal in the fallback file instead of losing track of it', async () => {
+      expect(await check()).toEqual({ status: 'ok', newSignals: 1, sent: 1 });
+
+      expect(notifier.sent).toHaveLength(1);
+      expect(store.signals.has(keyB)).toBe(false);
+      expect(fallback.entries).toHaveLength(1);
+      expect(fallback.entries[0]).toMatchObject({
+        signal: { key: keyB, direction: 'BUY', entry: 3951.94 },
+        announcedAt: '2026-11-04T09:01:00.000Z',
+      });
+    });
+
+    it('does not announce it again while the database keeps refusing', async () => {
+      await check();
+      expect(await check()).toEqual({ status: 'ok', newSignals: 0, sent: 0 });
+      expect(await check()).toEqual({ status: 'ok', newSignals: 0, sent: 0 });
+
+      expect(notifier.sent).toHaveLength(1);
+      expect(fallback.entries).toHaveLength(1);
+    });
+
+    it('copies the file into the database at the next check that works, and empties it', async () => {
+      await check();
+      store.failRecord = false;
+
+      expect(await check()).toEqual({ status: 'ok', newSignals: 0, sent: 0 });
+      expect(store.signals.get(keyB)).toBe('announced');
+      expect(store.announcedAt.get(keyB)).toEqual(new Date('2026-11-04T09:01:00Z'));
+      expect(fallback.entries).toEqual([]);
+      expect(notifier.sent).toHaveLength(1);
+    });
+
+    it('puts the file entries and the newly caught signals into the database together', async () => {
+      await check();
+      store.failRecord = false;
+      chart = snapshotOf(combine(SELL_C, BUY_A, BUY_B, SELL_D));
+
+      expect(await check()).toEqual({ status: 'ok', newSignals: 1, sent: 1 });
+
+      expect(notifier.sent).toHaveLength(2);
+      expect(notifier.sent[1]).toContain('SELL CANDIDATE');
+      expect(store.signals.get(keyB)).toBe('announced');
+      expect(store.signals.get(keyD)).toBe('announced');
+      expect(fallback.entries).toEqual([]);
+    });
+
+    it('sends every new signal even though none can be recorded, and keeps them all in the file', async () => {
+      chart = snapshotOf(combine(SELL_C, BUY_A, BUY_B, SELL_D));
+
+      expect(await check()).toEqual({ status: 'ok', newSignals: 2, sent: 2 });
+      expect(fallback.entries.map((entry) => entry.signal.key)).toEqual([keyB, keyD]);
+    });
+
+    it('treats a signal that is only in the file as already announced', async () => {
+      await check();
+      store.failRecord = false;
+      store.signals.delete(keyB); // the database never had it
+
+      // The copy into the database happens first, so it is found there next time as well.
+      await check();
+      expect(notifier.sent).toHaveLength(1);
+    });
+
+    it('warns about damaged lines in the file but carries on', async () => {
+      fallback.skipped = 2;
+      expect(await check()).toEqual({ status: 'ok', newSignals: 1, sent: 1 });
     });
   });
 });

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { extractSignals } from '../../src/chart-monitor/signals.js';
 import { PgMonitorStore } from '../../src/chart-monitor/store.js';
+import type { ChartSignal } from '../../src/chart-monitor/signals.js';
 import { migrate } from '../../src/migrations.js';
 import { PgliteDb } from '../support/pglite-db.js';
 import { BUY_A, BUY_B, SELL_C, combine, drawSignal } from './support.js';
@@ -8,6 +9,7 @@ import { BUY_A, BUY_B, SELL_C, combine, drawSignal } from './support.js';
 const [buyA] = extractSignals(BUY_A);
 const [buyB] = extractSignals(BUY_B);
 const [sellC] = extractSignals(SELL_C);
+const announced = (signal: ChartSignal, announcedAt = new Date()) => ({ signal, announcedAt });
 
 describe('PgMonitorStore', () => {
   let db: PgliteDb;
@@ -47,8 +49,8 @@ describe('PgMonitorStore', () => {
   });
 
   it('remembers an announced signal with its levels and keeps the first record on a repeat', async () => {
-    await store.recordAnnounced(buyB!);
-    await store.recordAnnounced(buyB!);
+    await store.recordAnnounced([announced(buyB!)]);
+    await store.recordAnnounced([announced(buyB!)]);
 
     const { rows: saved } = await db.query(
       'SELECT symbol, timeframe, direction, entry, stop, target, hit, source FROM chart_signals',
@@ -68,7 +70,7 @@ describe('PgMonitorStore', () => {
   });
 
   it('stamps every row with created_at', async () => {
-    await store.recordAnnounced(buyA!);
+    await store.recordAnnounced([announced(buyA!)]);
     await store.saveHealth({ failures: 1, alerted: false });
 
     const signal = await db.query<{ created_at: Date }>('SELECT created_at FROM chart_signals');
@@ -87,21 +89,37 @@ describe('PgMonitorStore', () => {
     expect(after.created_at).toEqual(before.created_at);
   });
 
+  it('uses the time the message was sent as created_at', async () => {
+    await store.recordAnnounced([announced(buyA!, new Date('2026-11-04T08:31:00Z'))]);
+    const { rows: saved } = await db.query<{ created_at: Date }>('SELECT created_at FROM chart_signals');
+    expect(saved[0]?.created_at.toISOString()).toBe('2026-11-04T08:31:00.000Z');
+  });
+
+  it('records several announced signals together, or none if one is refused', async () => {
+    await store.recordAnnounced([announced(buyA!), announced(sellC!)]);
+    expect(await rows()).toHaveLength(2);
+
+    await db.exec('TRUNCATE chart_signals RESTART IDENTITY');
+    const broken = { ...buyB!, direction: 'HOLD' } as unknown as ChartSignal;
+    await expect(store.recordAnnounced([announced(buyA!), announced(broken)])).rejects.toThrow();
+    expect(await rows()).toEqual([]);
+  });
+
   it('stores a missing entry as null', async () => {
     const [noEntry] = extractSignals(drawSignal({ x: 2, stop: 3900, target: 3990 }));
-    await store.recordAnnounced(noEntry!);
+    await store.recordAnnounced([announced(noEntry!)]);
     const { rows: saved } = await db.query<{ entry: number | null }>('SELECT entry FROM chart_signals');
     expect(saved[0]?.entry).toBeNull();
   });
 
   it('keeps charts apart by symbol and timeframe', async () => {
-    await store.recordAnnounced(buyA!);
+    await store.recordAnnounced([announced(buyA!)]);
     const otherTimeframe = new PgMonitorStore(db, 'XAUUSD', '15');
     const otherSymbol = new PgMonitorStore(db, 'EURUSD', '30');
 
     expect(await otherTimeframe.seenKeys()).toEqual(new Set());
     expect(await otherSymbol.seenKeys()).toEqual(new Set());
-    await otherTimeframe.recordAnnounced(buyA!);
+    await otherTimeframe.recordAnnounced([announced(buyA!)]);
     expect(await rows()).toHaveLength(2);
   });
 

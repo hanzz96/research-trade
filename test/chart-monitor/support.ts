@@ -1,6 +1,7 @@
 import type { ChartSnapshot, StudySnapshot } from '../../src/chart-monitor/chart-reader.js';
 import type { ChartSignal } from '../../src/chart-monitor/signals.js';
-import type { MonitorHealth, MonitorStore } from '../../src/chart-monitor/store.js';
+import type { PendingEntry, PendingLog } from '../../src/chart-monitor/fallback.js';
+import type { AnnouncedSignal, MonitorHealth, MonitorStore } from '../../src/chart-monitor/store.js';
 import type { Notifier } from '../../src/shared/discord.js';
 
 interface SignalDrawing {
@@ -79,6 +80,9 @@ export class FakeNotifier implements Notifier {
 export class MemoryStore implements MonitorStore {
   health: MonitorHealth = { baselined: false, failures: 0, alerted: false };
   readonly signals = new Map<string, 'baseline' | 'announced'>();
+  readonly announcedAt = new Map<string, Date>();
+  /** Makes recordAnnounced fail the way a database that is down would. */
+  failRecord = false;
 
   async loadHealth(): Promise<MonitorHealth> {
     return { ...this.health };
@@ -97,8 +101,31 @@ export class MemoryStore implements MonitorStore {
     this.health = { ...this.health, baselined: true };
   }
 
-  async recordAnnounced(signal: ChartSignal): Promise<void> {
-    if (!this.signals.has(signal.key)) this.signals.set(signal.key, 'announced');
+  async recordAnnounced(entries: readonly AnnouncedSignal[]): Promise<void> {
+    if (this.failRecord) throw new Error('connection refused');
+    for (const { signal, announcedAt } of entries) {
+      if (this.signals.has(signal.key)) continue;
+      this.signals.set(signal.key, 'announced');
+      this.announcedAt.set(signal.key, announcedAt);
+    }
+  }
+}
+
+/** In-memory PendingLog standing in for the fallback file. */
+export class FakePendingLog implements PendingLog {
+  entries: PendingEntry[] = [];
+  skipped = 0;
+
+  async read(): Promise<{ entries: PendingEntry[]; skipped: number }> {
+    return { entries: [...this.entries], skipped: this.skipped };
+  }
+
+  async append(entry: PendingEntry): Promise<void> {
+    this.entries.push(entry);
+  }
+
+  async remove(keys: ReadonlySet<string>): Promise<void> {
+    this.entries = this.entries.filter((entry) => !keys.has(entry.signal.key));
   }
 }
 
