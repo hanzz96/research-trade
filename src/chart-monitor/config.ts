@@ -26,9 +26,15 @@ const envSchema = z.object({
   // Signals whose Discord message went out but whose database record failed wait in this file
   // until the next check copies them into PostgreSQL. The file only exists while that is the case.
   MONITOR_FALLBACK_FILE: z.string().min(1).default('.monitor-pending.jsonl'),
+  // 'gold' checks only while XAU/USD trades (Monday 05:00 to Saturday 05:00 WIB, see market.ts);
+  // 'always' checks every candle, for example to test on a weekend.
+  MONITOR_MARKET_HOURS: z.enum(['gold', 'always']).default('gold'),
   // Seconds to wait after a candle closes before reading the chart.
   MONITOR_DELAY_SECONDS: z.coerce.number().int().min(5).max(600).default(60),
   DISPLAY_TIMEZONE: timezone,
+}).refine((config) => config.MONITOR_DELAY_SECONDS < Number(config.MONITOR_TIMEFRAME) * 60, {
+  message: 'must be shorter than the candle (MONITOR_TIMEFRAME)',
+  path: ['MONITOR_DELAY_SECONDS'],
 });
 
 export type MonitorConfig = z.infer<typeof envSchema>;
