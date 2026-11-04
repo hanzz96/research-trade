@@ -165,8 +165,12 @@ from `.env` (the PostgreSQL database must be up; its tables are created on start
    `/Applications/TradingView.app/Contents/MacOS/TradingView --remote-debugging-port=9222`.
 2. Keep one chart on `XAUUSD`, **M30**, with the *XAUUSD Entry Reminder* indicator and its
    "Draw entry, stop and target on a signal" input on (the monitor reads those drawings).
-3. Run `npm run monitor`. It checks one minute after every M30 candle close (`:01` and `:31`) and
-   keeps running until stopped. `npm run monitor:once` does a single check and exits (exit code 1 on
+3. Run `npm run monitor`. It checks once right away (also when the market is closed, to catch up on
+   signals from while it was off), then one minute after every M30 candle close (`:01` and `:31`),
+   scheduled with [croner](https://github.com/Hexagon/croner), and keeps running until stopped. The
+   later checks run only while XAU/USD trades: **Monday 05:00 to Saturday 05:00 WIB**, nonstop, no
+   holidays (`src/chart-monitor/market.ts`; set `MONITOR_MARKET_HOURS=always` to check every candle,
+   for example to test on a weekend). `npm run monitor:once` does a single check and exits (exit code 1 on
    failure), for cron or launchd. `npm run monitor:pretty` is the same loop with the JSON logs made
    readable (local time, one field per line), handy in a terminal; use `monitor` where the logs are
    read by a machine.

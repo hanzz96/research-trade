@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import { Cron } from 'croner';
 import moment from 'moment-timezone';
 import { pino, type Logger } from 'pino';
 import { migrate } from '../migrations.js';
@@ -8,8 +9,9 @@ import { evaluateInChart } from './cdp.js';
 import { readChart } from './chart-reader.js';
 import { loadMonitorConfig, type MonitorConfig } from './config.js';
 import { FilePendingLog } from './fallback.js';
+import { GOLD_WEEK, isTradingCandle, nextOpening } from './market.js';
 import { checkOnce, type CheckResult, type MonitorDeps } from './monitor.js';
-import { nextRunAt } from './schedule.js';
+import { closedCandleOpen, cronPattern } from './schedule.js';
 import { PgMonitorStore } from './store.js';
 
 function buildDeps(config: MonitorConfig, db: Db, log: Logger): MonitorDeps {
@@ -34,7 +36,7 @@ function stopSignal(): AbortSignal {
   return stop.signal;
 }
 
-/** One check that cannot bring the loop down: an unexpected error becomes a failed result. */
+/** One check that cannot bring the monitor down: an unexpected error becomes a failed result. */
 async function runCheck(deps: MonitorDeps): Promise<CheckResult> {
   try {
     return await checkOnce(deps);
@@ -45,21 +47,79 @@ async function runCheck(deps: MonitorDeps): Promise<CheckResult> {
   }
 }
 
-/** Waits until shortly after the next candle closes. False if the process was told to stop meanwhile. */
-async function waitForNextCandle(config: MonitorConfig, log: Logger, stop: AbortSignal): Promise<boolean> {
-  const next = nextRunAt(moment(), Number(config.MONITOR_TIMEFRAME), config.MONITOR_DELAY_SECONDS);
-  log.info({ next: moment.tz(next, config.DISPLAY_TIMEZONE).format('YYYY-MM-DD HH:mm:ss z') }, 'waiting for the next candle');
-  try {
-    await sleep(next.getTime() - Date.now(), undefined, { signal: stop });
-    return true;
-  } catch {
-    return false;
+async function checkAndLog(deps: MonitorDeps): Promise<CheckResult> {
+  console.log("Running..")
+  const result = await runCheck(deps);
+  deps.log.info(result, 'check finished');
+  return result;
+}
+
+const formatLocal = (value: moment.MomentInput, timeZone: string) =>
+  moment.tz(value, timeZone).format('YYYY-MM-DD HH:mm:ss z');
+
+/**
+ * Checks the chart shortly after every candle close, but only while the market trades. The first
+ * check has already run at startup, so this only schedules the following ones. Returns when the
+ * process is asked to stop, after a check that is still running has finished.
+ */
+async function runSchedule(config: MonitorConfig, deps: MonitorDeps, stop: AbortSignal): Promise<void> {
+  const { log } = deps;
+  const period = Number(config.MONITOR_TIMEFRAME);
+  const delay = config.MONITOR_DELAY_SECONDS;
+  const week = config.MONITOR_MARKET_HOURS === 'gold' ? GOLD_WEEK : 'always';
+  const timeZone = config.DISPLAY_TIMEZONE;
+
+  /** Whether the candle that closed most recently belongs to the trading week. */
+  const marketOpen = () => isTradingCandle(closedCandleOpen(moment(), period, delay), week);
+  const logMarket = (open: boolean) =>
+    open || week === 'always'
+      ? log.info({ market: 'open' }, 'market open, checks run')
+      : log.info(
+          { market: 'closed', reopens: formatLocal(nextOpening(moment(), week), timeZone) },
+          'market closed, checks paused',
+        );
+
+  let wasOpen = marketOpen();
+  logMarket(wasOpen);
+
+  const job = new Cron(
+    cronPattern(period, delay),
+    {
+      timezone: 'UTC',
+      // A check that is still running is never started a second time.
+      protect: true,
+      catch: (err) => log.error({ err: err instanceof Error ? err.message : String(err) }, 'scheduled check crashed'),
+    },
+    async () => {
+      const open = marketOpen();
+      if (open !== wasOpen) {
+        wasOpen = open;
+        logMarket(open);
+      }
+      if (!open) return;
+
+      await checkAndLog(deps);
+      logNext();
+    },
+  );
+
+  function logNext(): void {
+    const next = job.nextRun();
+    if (next) log.info({ next: formatLocal(next, timeZone) }, 'waiting for the next candle');
   }
+  if (wasOpen) logNext();
+
+  await new Promise<void>((resolve) => {
+    if (stop.aborted) resolve();
+    else stop.addEventListener('abort', () => resolve(), { once: true });
+  });
+  job.stop();
+  while (job.isBusy()) await sleep(100);
 }
 
 /**
  * Entry point of the chart monitor, a separate process from the webhook server.
- *   npm run monitor        checks after every candle close until stopped
+ *   npm run monitor        checks now, then after every candle close while the market trades
  *   npm run monitor:once   one check, then exit (for cron or launchd); exit code 1 on failure
  */
 async function main(): Promise<void> {
@@ -73,17 +133,13 @@ async function main(): Promise<void> {
     const deps = buildDeps(config, db, log);
     const stop = stopSignal();
 
-    while (!stop.aborted) {
-      console.log("Running..")
-      const result = await runCheck(deps);
-      log.info(result, 'check finished');
-
-      if (once) {
-        process.exitCode = result.status === 'failed' ? 1 : 0;
-        return;
-      }
-      if (!(await waitForNextCandle(config, log, stop))) break;
+    // Also when the market is closed: catches up on signals from while the monitor was off.
+    const result = await checkAndLog(deps);
+    if (once) {
+      process.exitCode = result.status === 'failed' ? 1 : 0;
+      return;
     }
+    if (!stop.aborted) await runSchedule(config, deps, stop);
   } finally {
     await db.close();
   }

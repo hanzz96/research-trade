@@ -15,6 +15,7 @@ describe('loadMonitorConfig', () => {
       MONITOR_SYMBOL: 'XAUUSD',
       MONITOR_TIMEFRAME: '30',
       MONITOR_STUDY: 'XAUUSD Entry Reminder',
+      MONITOR_MARKET_HOURS: 'gold',
       MONITOR_FALLBACK_FILE: '.monitor-pending.jsonl',
       MONITOR_DELAY_SECONDS: 60,
       DISPLAY_TIMEZONE: 'Asia/Jakarta',
@@ -34,6 +35,17 @@ describe('loadMonitorConfig', () => {
     expect(loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: '15' }).MONITOR_TIMEFRAME).toBe('15');
     expect(() => loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: '45' })).toThrow('divide 60');
     expect(() => loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: '1D' })).toThrow('minutes');
+  });
+
+  it('accepts the market hours setting and nothing else', () => {
+    expect(loadMonitorConfig({ ...base, MONITOR_MARKET_HOURS: 'always' }).MONITOR_MARKET_HOURS).toBe('always');
+    expect(() => loadMonitorConfig({ ...base, MONITOR_MARKET_HOURS: 'forex' })).toThrow('MONITOR_MARKET_HOURS');
+  });
+
+  it('needs the delay to be shorter than the candle', () => {
+    expect(loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: '1', MONITOR_DELAY_SECONDS: '5' }).MONITOR_DELAY_SECONDS).toBe(5);
+    expect(() => loadMonitorConfig({ ...base, MONITOR_TIMEFRAME: '1' })).toThrow('MONITOR_DELAY_SECONDS');
+    expect(() => loadMonitorConfig({ ...base, MONITOR_DELAY_SECONDS: '1800' })).toThrow('shorter than the candle');
   });
 
   it('does not echo the webhook URL in its errors', () => {
