@@ -91,7 +91,8 @@ missing, rate limit, a rejected request) and exits with code 1. Two things write
 
 1. Add `pine/alerts/xauusd_entry_reminder.pine` to your chart (Pine Editor → paste → Save → Add to chart)
    on `OANDA:XAUUSD`, timeframe **M15**. The higher-timeframe filter (H1) only applies when the
-   chart is below the higher timeframe.
+   chart is below the higher timeframe. The backend accepts only the timeframes in
+   `ALLOWED_TIMEFRAMES` (set it to `15` in `.env`), otherwise it answers `unsupported_timeframe`.
 2. Create **two alerts** (one per condition): *Condition* = this indicator → `BUY candidate`, then
    `SELL candidate`. Set *Trigger* to **Once Per Bar Close**.
 3. *Notifications* → enable **Webhook URL** and paste your public URL from above.
@@ -166,10 +167,10 @@ from `.env` (the PostgreSQL database must be up; its tables are created on start
 
 1. Start TradingView Desktop with the debug port, for example
    `/Applications/TradingView.app/Contents/MacOS/TradingView --remote-debugging-port=9222`.
-2. Keep one chart on `XAUUSD`, **M30**, with the *XAUUSD Entry Reminder* indicator and its
+2. Keep one chart on `XAUUSD`, **M15** (the same as `MONITOR_TIMEFRAME` in `.env`), with the *XAUUSD Entry Reminder* indicator and its
    "Draw entry, stop and target on a signal" input on (the monitor reads those drawings).
 3. Run `npm run monitor`. It checks once right away (also when the market is closed, to catch up on
-   signals from while it was off), then one minute after every M30 candle close (`:01` and `:31`),
+   signals from while it was off), then one minute after every M15 candle close (`:01`, `:16`, `:31` and `:46`),
    scheduled with [croner](https://github.com/Hexagon/croner), and keeps running until stopped. The
    later checks run only while XAU/USD trades: **Monday 05:00 to Saturday 05:00 WIB**, nonstop, no
    holidays (`src/chart-monitor/market.ts`; set `MONITOR_MARKET_HOURS=always` to check every candle,

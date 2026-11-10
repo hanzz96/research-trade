@@ -31,7 +31,8 @@ floating spread, margin/profit currency USD.
   reset), typical spread.
 - **Consequence of the current limits:** at 0.01 lot, a USD 1 move costs about USD 1. With a USD 1.25
   risk budget the stop can be at most about USD 1.25 away; at 0.02 lot only about USD 0.63. Stops
-  from swing + ATR on M15 are usually larger, so most signals will end as `NO_TRADE`. The limits are
+  from swing + ATR on M15 are usually larger (on M30 the two signals of 4 Nov 2026 had stops of about
+  USD 40; M15 stops are not measured yet), so most signals will end as `NO_TRADE`. The limits are
   left as specified and live in configuration; `NO_TRADE` alerts will show the risk a 0.01-lot trade
   would carry so the limits can be revisited with real data.
 
