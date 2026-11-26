@@ -13,7 +13,7 @@ describe('loadMonitorConfig', () => {
       CDP_HOST: '127.0.0.1',
       CDP_PORT: 9222,
       MONITOR_SYMBOL: 'XAUUSD',
-      MONITOR_TIMEFRAME: '30',
+      MONITOR_TIMEFRAME: '15',
       MONITOR_STUDY: 'XAUUSD Entry Reminder',
       MONITOR_MARKET_HOURS: 'gold',
       MONITOR_FALLBACK_FILE: '.monitor-pending.jsonl',
